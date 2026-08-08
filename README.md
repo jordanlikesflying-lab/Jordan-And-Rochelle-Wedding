@@ -1,3 +1,11 @@
+# v0.6.1 Quick Patch — Homepage Engagement Photo
+
+This patch adds a **Set as Homepage Favorite** button in Photo Manager. The selected photo replaces the `Your favorite engagement photo` placeholder on the public Home page. It does **not** have to be part of the guest album.
+
+Before deploying, run `v0.6.1-homepage-favorite-photo.sql` once in the Supabase SQL Editor. Then upload/commit the files as usual.
+
+---
+
 # Jordan & Rochelle Wedding Manager — Command Center v0.3.0
 
 This release keeps the v0.2.0 RSVP review and invitation tools and adds **Guest Profiles**.

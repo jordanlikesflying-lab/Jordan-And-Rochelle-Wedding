@@ -106,7 +106,7 @@ function renderHome() {
     <p class="eyebrow">We’re getting married</p><h2>Celebrate with us</h2>
     <p class="lead">We are excited to celebrate our wedding with our family and friends. Please RSVP and find the details for our special day below.</p>
     <button class="primary" onclick="nav('rsvp')">RSVP Now</button>
-  </div><div class="hero-photo placeholder-photo">Your favorite engagement photo</div></section>
+  </div>${publicFavoritePhotoUrl ? `<div class="hero-photo hero-engagement-photo"><img src="${esc(publicFavoritePhotoUrl)}" alt="${esc(publicFavoritePhoto?.caption || 'Jordan and Rochelle engagement photo')}"></div>` : `<div class="hero-photo placeholder-photo">${publicFavoriteLoading ? 'Loading our favorite engagement photo…' : 'Your favorite engagement photo'}</div>`}</section>
   <section class="quick-grid">
     ${card('👥', 'RSVP', 'Tell us whether you can celebrate with us.', 'rsvp')}
     ${card('📅', 'Wedding Details', 'Saturday, November 14, 2026 at 10:00 AM.', 'details')}
@@ -1663,6 +1663,9 @@ let publicPhotos = [];
 let publicPhotoUrls = new Map();
 let publicPhotosLoading = false;
 let publicPhotosError = '';
+let publicFavoritePhoto = null;
+let publicFavoritePhotoUrl = '';
+let publicFavoriteLoading = false;
 
 function photoFileName(path = '') {
   const part = String(path).split('/').pop() || 'photo';
@@ -1674,6 +1677,22 @@ async function signedPhotoUrl(path, expiresIn = 3600) {
   const { data, error } = await db.storage.from(PHOTO_BUCKET).createSignedUrl(path, expiresIn);
   if (error) return '';
   return data?.signedUrl || '';
+}
+
+async function loadPublicFavoritePhoto() {
+  if (!db || publicFavoriteLoading) return;
+  publicFavoriteLoading = true;
+  if (page === 'home') render();
+  const { data, error } = await db.from('photos').select('*').eq('is_favorite_engagement', true).limit(1).maybeSingle();
+  if (!error && data) {
+    publicFavoritePhoto = data;
+    publicFavoritePhotoUrl = await signedPhotoUrl(data.storage_path, 1800);
+  } else {
+    publicFavoritePhoto = null;
+    publicFavoritePhotoUrl = '';
+  }
+  publicFavoriteLoading = false;
+  if (page === 'home') render();
 }
 
 async function hydrateAdminPhotoUrls() {
@@ -1715,6 +1734,7 @@ function nav(next) {
   render();
   window.scrollTo({ top: 0, behavior: 'smooth' });
   if (next === 'admin') loadAdmin();
+  if (next === 'home' && !isAdminPortal) loadPublicFavoritePhoto();
   if (next === 'registry' && !isAdminPortal) loadPublicRegistry();
   if (next === 'photos' && !isAdminPortal) loadPublicPhotos();
 }
@@ -1789,6 +1809,7 @@ function renderPhotoManager() {
   const query = photoSearch.trim().toLowerCase();
   const filtered = query ? all.filter((photo) => [photo.caption, photo.storage_path].some((value) => String(value || '').toLowerCase().includes(query))) : all;
   const guestCount = all.filter((photo) => photo.show_in_guest_album).length;
+  const favorite = all.find((photo) => photo.is_favorite_engagement) || null;
   let selected = filtered.find((photo) => photo.id === selectedPhotoId) || null;
   if (!selected && filtered.length) {
     selected = filtered[0];
@@ -1802,10 +1823,11 @@ function renderPhotoManager() {
       ${metricCard('Private library', all.length, 'Total uploaded photos')}
       ${metricCard('Guest album', guestCount, 'Visible to guests')}
       ${metricCard('Private only', all.length - guestCount, 'Jordan & Rochelle only')}
+      ${metricCard('Homepage favorite', favorite ? 1 : 0, favorite ? 'Selected' : 'Not selected')}
     </section>
     <div class="registry-toolbar"><input id="photo-search" type="search" value="${esc(photoSearch)}" placeholder="Search captions or file names" oninput="setPhotoSearch(this.value)"><span>${filtered.length} photo${filtered.length === 1 ? '' : 's'}</span></div>
     <div class="photo-manager-split">
-      <aside class="photo-admin-grid">${filtered.length ? filtered.map((photo) => `<button class="photo-admin-tile ${selected?.id === photo.id ? 'active' : ''}" onclick="selectPhoto('${photo.id}')">${photoThumb(photo)}<span class="photo-tile-copy"><strong>${esc(photo.caption || photoFileName(photo.storage_path))}</strong><small>${photo.show_in_guest_album ? 'Guest album' : 'Private only'}</small></span></button>`).join('') : '<p class="muted">No matching photos.</p>'}</aside>
+      <aside class="photo-admin-grid">${filtered.length ? filtered.map((photo) => `<button class="photo-admin-tile ${selected?.id === photo.id ? 'active' : ''}" onclick="selectPhoto('${photo.id}')">${photoThumb(photo)}<span class="photo-tile-copy"><strong>${esc(photo.caption || photoFileName(photo.storage_path))}</strong><small>${photo.is_favorite_engagement ? '★ Homepage favorite · ' : ''}${photo.show_in_guest_album ? 'Guest album' : 'Private only'}</small></span></button>`).join('') : '<p class="muted">No matching photos.</p>'}</aside>
       <section class="photo-detail">${selected ? renderPhotoDetail(selected, all) : `<div class="empty-state admin-empty"><div class="big-icon">📷</div><h2>No photos yet</h2><p>Upload photos to create your private library.</p><button class="primary" onclick="openPhotoUploadDialog()">Upload Photos</button></div>`}</section>
     </div>
     ${guestCount ? `<section class="admin-panel photo-preview-panel"><div class="panel-heading"><div><h2>Guest album preview</h2><p class="muted">Only these selected photos appear on the public website.</p></div></div><div class="photo-preview-grid">${all.filter((photo) => photo.show_in_guest_album).map((photo) => `<figure>${photoThumb(photo)}${photo.caption ? `<figcaption>${esc(photo.caption)}</figcaption>` : ''}</figure>`).join('')}</div></section>` : ''}
@@ -1815,7 +1837,7 @@ function renderPhotoManager() {
 function renderPhotoDetail(photo, all) {
   const index = all.findIndex((entry) => entry.id === photo.id);
   return `<article class="photo-detail-card">
-    <div class="registry-detail-header"><div><p class="eyebrow">Photo</p><h2>${esc(photo.caption || photoFileName(photo.storage_path))}</h2><div class="profile-pills"><span class="registry-visibility ${photo.show_in_guest_album ? 'visible' : 'hidden'}">${photo.show_in_guest_album ? 'Visible to guests' : 'Private only'}</span></div></div><div class="profile-actions"><button class="secondary" onclick="openPhotoEditDialog('${photo.id}')">Edit</button><button class="danger-button" onclick="deletePhoto('${photo.id}')">Delete</button></div></div>
+    <div class="registry-detail-header"><div><p class="eyebrow">Photo</p><h2>${esc(photo.caption || photoFileName(photo.storage_path))}</h2><div class="profile-pills"><span class="registry-visibility ${photo.show_in_guest_album ? 'visible' : 'hidden'}">${photo.show_in_guest_album ? 'Visible in guest album' : 'Private library'}</span>${photo.is_favorite_engagement ? '<span class="registry-visibility favorite-photo-badge">★ Homepage favorite</span>' : ''}</div></div><div class="profile-actions"><button class="secondary" onclick="openPhotoEditDialog('${photo.id}')">Edit</button><button class="danger-button" onclick="deletePhoto('${photo.id}')">Delete</button></div></div>
     <div class="photo-detail-image">${photoThumb(photo)}</div>
     <div class="profile-info-grid">
       <div class="profile-info"><span>File</span><strong>${esc(photoFileName(photo.storage_path))}</strong></div>
@@ -1824,6 +1846,7 @@ function renderPhotoDetail(photo, all) {
       <div class="profile-info"><span>Visibility</span><strong>${photo.show_in_guest_album ? 'Guest album' : 'Private library only'}</strong></div>
     </div>
     <section class="profile-section"><div class="registry-action-grid">
+      <button class="primary" onclick="setFavoriteEngagementPhoto('${photo.id}')">${photo.is_favorite_engagement ? '★ Homepage Favorite' : 'Set as Homepage Favorite'}</button>
       <button class="secondary" onclick="toggleGuestAlbum('${photo.id}')">${photo.show_in_guest_album ? 'Remove from Guest Album' : 'Add to Guest Album'}</button>
       <button class="secondary" ${index <= 0 ? 'disabled' : ''} onclick="movePhoto('${photo.id}', -1)">Move Earlier</button>
       <button class="secondary" ${index >= all.length - 1 ? 'disabled' : ''} onclick="movePhoto('${photo.id}', 1)">Move Later</button>
@@ -1907,6 +1930,23 @@ async function savePhotoEdit(event, id) {
   if (error) return toast(error.message, 'error');
   closeModal();
   toast('Photo updated.');
+  await loadAdmin();
+  await hydrateAdminPhotoUrls();
+}
+
+async function setFavoriteEngagementPhoto(id) {
+  const photo = adminData.photos.find((item) => item.id === id);
+  if (!photo) return;
+  const currentFavorite = adminData.photos.find((item) => item.is_favorite_engagement && item.id !== id);
+  if (currentFavorite) {
+    const { error: clearError } = await db.from('photos').update({ is_favorite_engagement: false }).eq('id', currentFavorite.id);
+    if (clearError) return toast(clearError.message, 'error');
+  }
+  const { error } = await db.from('photos').update({ is_favorite_engagement: true }).eq('id', id);
+  if (error) return toast(error.message, 'error');
+  publicFavoritePhoto = null;
+  publicFavoritePhotoUrl = '';
+  toast('Homepage engagement photo updated.');
   await loadAdmin();
   await hydrateAdminPhotoUrls();
 }
