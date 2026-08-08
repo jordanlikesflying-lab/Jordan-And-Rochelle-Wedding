@@ -45,3 +45,20 @@ No new tables are required. Guest Profiles use the existing:
 - `job_assignments`
 
 The configured browser client uses the existing Supabase publishable key. Keep service-role credentials out of this repository.
+
+## v0.4.0 — Wedding Jobs
+
+This release adds a complete Wedding Jobs workspace to the private Command Center:
+
+- Add and edit wedding jobs
+- Set number of people needed, location, start time, and instructions
+- Mark jobs as available for volunteers
+- Assign guests or households directly from a job
+- Prevent duplicate assignments to the same job
+- Remove individual job assignments
+- See filled vs. still-needed positions
+- Search jobs
+- Delete jobs, with an explicit warning when assignments will also be removed
+- Dashboard attention count now reflects genuinely unfilled job positions
+
+No new Supabase tables are required. This release uses the existing `wedding_jobs` and `job_assignments` tables.

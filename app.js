@@ -1142,3 +1142,254 @@ function invitationTable(items) {
   </tbody></table></div>`;
 }
 
+
+// Command Center v0.4.0 — Wedding Jobs
+let selectedJobId = null;
+let jobSearch = '';
+
+function jobAssignments(jobId) {
+  return adminData.assignments.filter((assignment) => assignment.job_id === jobId);
+}
+
+function jobStats(job) {
+  const assignments = jobAssignments(job.id);
+  const filled = assignments.filter((item) => String(item.status || 'assigned').toLowerCase() !== 'cancelled').length;
+  const needed = Math.max(0, Number(job.openings || 0));
+  return { assignments, filled, needed, remaining: Math.max(0, needed - filled) };
+}
+
+function weddingJobTotals() {
+  const stats = adminData.jobs.map((job) => jobStats(job));
+  return {
+    jobs: adminData.jobs.length,
+    positions: stats.reduce((sum, item) => sum + item.needed, 0),
+    filled: stats.reduce((sum, item) => sum + Math.min(item.filled, item.needed), 0),
+    remaining: stats.reduce((sum, item) => sum + item.remaining, 0)
+  };
+}
+
+function setJobSearch(value) {
+  jobSearch = value;
+  render();
+  const input = document.getElementById('job-search');
+  input?.focus();
+  input?.setSelectionRange(value.length, value.length);
+}
+
+function selectJob(id) {
+  selectedJobId = id;
+  render();
+}
+
+function renderJobs() {
+  const query = jobSearch.trim().toLowerCase();
+  const filtered = query ? adminData.jobs.filter((job) => [job.title, job.description, job.location]
+    .some((value) => String(value || '').toLowerCase().includes(query))) : adminData.jobs;
+
+  let selected = selectedJobId ? filtered.find((job) => job.id === selectedJobId) : null;
+  if (!selected && filtered.length) {
+    selected = filtered[0];
+    selectedJobId = selected.id;
+  }
+  if (!filtered.length) selectedJobId = null;
+
+  const totals = weddingJobTotals();
+  return `<div class="admin-view">
+    <div class="view-heading"><div><p class="eyebrow">Wedding helpers</p><h1>Wedding Jobs</h1><p>Create jobs, assign people, and see what still needs help.</p></div><button class="primary" onclick="openJobDialog()">Add Wedding Job</button></div>
+    <section class="job-metric-grid">
+      ${metricCard('Jobs', totals.jobs, 'Wedding-day responsibilities')}
+      ${metricCard('Positions needed', totals.positions, 'Total people requested')}
+      ${metricCard('Assigned', totals.filled, 'Filled positions')}
+      ${metricCard('Still needed', totals.remaining, totals.remaining ? 'Needs attention' : 'All positions filled', totals.remaining > 0)}
+    </section>
+    <div class="job-toolbar"><input id="job-search" type="search" value="${esc(jobSearch)}" placeholder="Search jobs, locations, or instructions" oninput="setJobSearch(this.value)"><span>${filtered.length} job${filtered.length === 1 ? '' : 's'}</span></div>
+    <div class="job-split">
+      <aside class="job-list">${filtered.length ? filtered.map((job) => renderJobListItem(job, selected?.id === job.id)).join('') : '<p class="muted job-empty">No matching wedding jobs.</p>'}</aside>
+      <section class="job-detail">${selected ? renderJobDetail(selected) : '<div class="empty-state admin-empty"><div class="big-icon">✓</div><h2>No wedding jobs yet</h2><p>Add a job when you are ready to assign helpers.</p><button class="primary" onclick="openJobDialog()">Add Wedding Job</button></div>'}</section>
+    </div>
+  </div>`;
+}
+
+function renderJobListItem(job, active) {
+  const stats = jobStats(job);
+  return `<button class="job-list-item ${active ? 'active' : ''}" onclick="selectJob('${job.id}')">
+    <span class="job-list-copy"><strong>${esc(job.title)}</strong><small>${esc(job.location || 'No location set')}</small></span>
+    <span class="job-list-count ${stats.remaining ? 'open' : 'filled'}">${stats.remaining ? `${stats.remaining} open` : 'Filled'}</span>
+  </button>`;
+}
+
+function renderJobDetail(job) {
+  const stats = jobStats(job);
+  return `<article class="job-detail-card">
+    <div class="job-detail-header">
+      <div><p class="eyebrow">${job.allow_volunteers ? 'Available to volunteers' : 'Assigned by Jordan & Rochelle'}</p><h2>${esc(job.title)}</h2><div class="profile-pills">${stats.remaining ? statusPill('needs_review').replace('Needs Review', `${stats.remaining} Still Needed`) : statusPill('verified').replace('Verified', 'Fully Staffed')}</div></div>
+      <div class="profile-actions"><button class="secondary" onclick="openJobDialog('${job.id}')">Edit Job</button><button class="danger-button" onclick="deleteJob('${job.id}')">Delete Job</button></div>
+    </div>
+    <div class="job-info-grid">
+      <div class="profile-info"><span>People needed</span><strong>${stats.needed}</strong></div>
+      <div class="profile-info"><span>Assigned</span><strong>${stats.filled}</strong></div>
+      <div class="profile-info"><span>Still needed</span><strong>${stats.remaining}</strong></div>
+      <div class="profile-info"><span>Starts</span><strong>${formatDate(job.starts_at)}</strong></div>
+      <div class="profile-info"><span>Location</span><strong>${esc(job.location || '—')}</strong></div>
+      <div class="profile-info"><span>Volunteer signup</span><strong>${job.allow_volunteers ? 'Available' : 'Not shown to guests'}</strong></div>
+    </div>
+    <section class="profile-section"><div class="profile-section-heading"><h3>Instructions</h3></div><p class="job-description">${esc(job.description || 'No instructions added yet.')}</p></section>
+    <section class="profile-section"><div class="profile-section-heading"><h3>Assigned people</h3><button onclick="openJobAssignmentDialog('${job.id}')">Assign Guest</button></div>
+      ${stats.assignments.length ? `<div class="assignment-list">${stats.assignments.map((assignment) => renderJobAssignmentRow(assignment)).join('')}</div>` : '<p class="muted">No one has been assigned to this job yet.</p>'}
+    </section>
+  </article>`;
+}
+
+function renderJobAssignmentRow(assignment) {
+  const linkedRsvp = assignment.rsvp_id ? adminData.rsvps.find((item) => item.id === assignment.rsvp_id) : null;
+  const linkedInvitation = assignment.invitation_id ? adminData.invitations.find((item) => item.id === assignment.invitation_id) : null;
+  const openAction = linkedRsvp ? `openGuestByRsvp('${linkedRsvp.id}')` : linkedInvitation ? `openGuestByInvitation('${linkedInvitation.id}')` : '';
+  return `<div class="assignment-row"><div><strong>${esc(assignment.person_name || 'Assigned helper')}</strong><span>${esc(assignment.instructions || 'No special instructions')}${assignment.status ? ` · ${esc(titleCase(assignment.status))}` : ''}</span></div><div class="assignment-row-actions">${openAction ? `<button onclick="${openAction}">Open profile</button>` : ''}<button class="danger-text" onclick="removeAssignment('${assignment.id}')">Remove</button></div></div>`;
+}
+
+function jobDateTimeLocal(value) {
+  if (!value) return '';
+  const date = new Date(value);
+  if (Number.isNaN(date.getTime())) return '';
+  const local = new Date(date.getTime() - date.getTimezoneOffset() * 60000);
+  return local.toISOString().slice(0, 16);
+}
+
+function openJobDialog(id = '') {
+  const job = id ? adminData.jobs.find((item) => item.id === id) : null;
+  const title = job ? 'Edit Wedding Job' : 'Add Wedding Job';
+  document.body.insertAdjacentHTML('beforeend', `<div class="modal-backdrop" id="modal"><form class="modal-card" onsubmit="saveJob(event)">
+    <input type="hidden" name="job_id" value="${esc(job?.id || '')}">
+    <div class="modal-heading"><h2>${title}</h2><button type="button" onclick="closeModal()">×</button></div>
+    <div class="form-grid">
+      <label class="field wide"><span>Job title</span><input name="title" required value="${esc(job?.title || '')}"></label>
+      <label class="field"><span>Location</span><input name="location" value="${esc(job?.location || '')}"></label>
+      <label class="field"><span>People needed</span><input type="number" name="openings" min="0" max="100" value="${Number(job?.openings ?? 1)}" required></label>
+      <label class="field wide"><span>Start date & time (optional)</span><input type="datetime-local" name="starts_at" value="${jobDateTimeLocal(job?.starts_at)}"></label>
+      <label class="field wide"><span>Description or instructions</span><textarea name="description" rows="5">${esc(job?.description || '')}</textarea></label>
+      <label class="field wide checkbox-field"><input type="checkbox" name="allow_volunteers" ${job?.allow_volunteers ? 'checked' : ''}><span>Show this as an available volunteer job</span></label>
+    </div>
+    <div class="modal-actions"><button type="button" class="secondary" onclick="closeModal()">Cancel</button><button class="primary" type="submit">${job ? 'Save Changes' : 'Save Job'}</button></div>
+  </form></div>`);
+}
+
+async function saveJob(event) {
+  event.preventDefault();
+  const form = new FormData(event.target);
+  const id = String(form.get('job_id') || '');
+  const startsAtValue = String(form.get('starts_at') || '').trim();
+  const payload = {
+    title: String(form.get('title')).trim(),
+    location: String(form.get('location') || '').trim() || null,
+    description: String(form.get('description') || '').trim() || null,
+    starts_at: startsAtValue ? new Date(startsAtValue).toISOString() : null,
+    openings: Math.max(0, Number(form.get('openings') || 0)),
+    allow_volunteers: form.get('allow_volunteers') === 'on'
+  };
+  const result = id ? await db.from('wedding_jobs').update(payload).eq('id', id) : await db.from('wedding_jobs').insert(payload).select('id').single();
+  if (result.error) return toast(result.error.message, 'error');
+  if (!id && result.data?.id) selectedJobId = result.data.id;
+  closeModal();
+  toast(id ? 'Wedding job updated.' : 'Wedding job added.');
+  await loadAdmin();
+}
+
+function assignmentGuestOptions() {
+  return guestRecords().map((record) => {
+    const rsvpId = record.rsvp?.id || '';
+    const invitationId = record.invitation?.id || record.invitationId || '';
+    const value = [record.key, rsvpId, invitationId].join('|');
+    return `<option value="${esc(value)}">${esc(record.name || record.household)} — ${esc(record.household)}</option>`;
+  }).join('');
+}
+
+function openJobAssignmentDialog(jobId) {
+  const job = adminData.jobs.find((item) => item.id === jobId);
+  if (!job) return;
+  const options = assignmentGuestOptions();
+  if (!options) return toast('Add an invitation or RSVP before assigning a job.', 'error');
+  document.body.insertAdjacentHTML('beforeend', `<div class="modal-backdrop" id="modal"><form class="modal-card" onsubmit="saveJobAssignment(event)">
+    <input type="hidden" name="job_id" value="${esc(job.id)}">
+    <div class="modal-heading"><h2>Assign ${esc(job.title)}</h2><button type="button" onclick="closeModal()">×</button></div>
+    <div class="form-grid">
+      <label class="field wide"><span>Guest or household</span><select name="guest_record" required><option value="">Choose a person…</option>${options}</select></label>
+      <label class="field"><span>Status</span><select name="status"><option value="assigned">Assigned</option><option value="confirmed">Confirmed</option><option value="volunteered">Volunteered</option></select></label>
+      <label class="field wide"><span>Instructions for this person (optional)</span><textarea name="instructions" rows="4"></textarea></label>
+    </div>
+    <div class="modal-actions"><button type="button" class="secondary" onclick="closeModal()">Cancel</button><button class="primary" type="submit">Assign Guest</button></div>
+  </form></div>`);
+}
+
+async function saveJobAssignment(event) {
+  event.preventDefault();
+  const form = new FormData(event.target);
+  const [recordKey, rsvpId, invitationId] = String(form.get('guest_record') || '').split('|');
+  const record = guestRecords().find((item) => item.key === recordKey);
+  if (!record) return toast('Choose a guest first.', 'error');
+  const jobId = String(form.get('job_id'));
+  const duplicate = adminData.assignments.some((item) => item.job_id === jobId && ((rsvpId && item.rsvp_id === rsvpId) || (invitationId && item.invitation_id === invitationId) || item.person_name === record.name));
+  if (duplicate) return toast('That person is already assigned to this job.', 'error');
+  const payload = {
+    job_id: jobId,
+    rsvp_id: rsvpId || null,
+    invitation_id: invitationId || null,
+    person_name: record.name || record.household,
+    status: String(form.get('status') || 'assigned'),
+    instructions: String(form.get('instructions') || '').trim() || null
+  };
+  const { error } = await db.from('job_assignments').insert(payload);
+  if (error) return toast(error.message, 'error');
+  closeModal();
+  toast(`${record.name || record.household} assigned.`);
+  await loadAdmin();
+}
+
+async function deleteJob(id) {
+  const job = adminData.jobs.find((item) => item.id === id);
+  if (!job) return;
+  const assignments = jobAssignments(id);
+  const warning = assignments.length
+    ? `Delete “${job.title}”? This job has ${assignments.length} assigned ${assignments.length === 1 ? 'person' : 'people'}. Their job assignments will also be removed.`
+    : `Delete “${job.title}”? This cannot be undone.`;
+  if (!window.confirm(warning)) return;
+
+  if (assignments.length) {
+    const { error: assignmentError } = await db.from('job_assignments').delete().eq('job_id', id);
+    if (assignmentError) return toast(`Could not remove assignments: ${assignmentError.message}`, 'error');
+  }
+  const { error } = await db.from('wedding_jobs').delete().eq('id', id);
+  if (error) return toast(error.message, 'error');
+  selectedJobId = null;
+  toast('Wedding job deleted.');
+  await loadAdmin();
+}
+
+// v0.4.0 dashboard: show genuinely unfilled positions rather than total requested positions.
+function renderDashboard() {
+  const metrics = dashboardMetrics();
+  const milliseconds = Math.max(0, weddingDate.getTime() - Date.now());
+  const days = Math.ceil(milliseconds / 86400000);
+  const recent = adminData.rsvps.slice(0, 6);
+  const jobTotals = weddingJobTotals();
+
+  return `<div class="admin-view">
+    <div class="view-heading"><div><p class="eyebrow">Welcome back</p><h1>Wedding Command Center</h1><p>Signed in as ${esc(session.user.email)}</p></div><button class="secondary" onclick="loadAdmin()">Refresh</button></div>
+    <div class="private-countdown"><span>Private countdown</span><strong>${days}</strong><em>days until “I do”</em></div>
+    <section class="metric-grid">
+      ${metricCard('Invited people', metrics.invitedPeople, 'Based on invitation limits')}
+      ${metricCard('RSVPs received', metrics.responses, 'Submitted responses')}
+      ${metricCard('Attending', metrics.attendingPeople, 'Adults and children')}
+      ${metricCard('Declined', metrics.declinedResponses, 'Responses declined')}
+      ${metricCard('Needs review', metrics.review, metrics.review ? 'Action required' : 'All caught up', metrics.review > 0)}
+    </section>
+    <section class="attention-grid">
+      <article class="admin-panel"><div class="panel-heading"><h2>Needs attention</h2></div>
+        <button class="attention-item" onclick="setAdminView('review')"><span>${metrics.review} RSVP${metrics.review === 1 ? '' : 's'} need review</span><b>Review →</b></button>
+        <button class="attention-item" onclick="setAdminView('jobs')"><span>${jobTotals.remaining} wedding-job position${jobTotals.remaining === 1 ? '' : 's'} still need help</span><b>View →</b></button>
+      </article>
+      <article class="admin-panel"><div class="panel-heading"><h2>Recent RSVPs</h2><button onclick="setAdminView('review')">View all</button></div>
+        ${recent.length ? recent.map((item) => `<div class="recent-row"><div><strong>${esc(item.first_name)} ${esc(item.last_name)}</strong><span>${titleCase(item.attendance)} · ${formatDate(item.created_at)}</span></div>${statusPill(item.verification_status)}</div>`).join('') : '<p class="muted">No RSVP responses yet.</p>'}
+      </article>
+    </section>
+  </div>`;
+}
