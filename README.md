@@ -86,3 +86,9 @@ This release adds the private photo library and curated public guest album.
 Before using Photo Manager, run `v0.6.0-photo-security.sql` once in the Supabase SQL Editor. This changes the `wedding-photos` Storage bucket from public to private. The existing Storage RLS policies then allow only selected guest-album photos to be read by public visitors, while admins can manage the full library.
 
 Photo Manager supports multi-photo upload, captions, guest-album visibility, ordering, preview, and permanent deletion from both Storage and the `photos` table.
+
+
+## v0.6.2
+Run `v0.6.2-planning-polish.sql` once in Supabase before deploying.
+Adds named RSVP attendees (including children), Excel/CSV invitation import, gift-list import,
+public Main Menu buttons, registry links, and editable wedding details/map settings.

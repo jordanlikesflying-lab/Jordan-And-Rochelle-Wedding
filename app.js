@@ -1994,3 +1994,283 @@ async function deletePhoto(id) {
   await loadAdmin();
   await hydrateAdminPhotoUrls();
 }
+
+
+/* ===== v0.6.2 planning polish ===== */
+let publicWeddingSettings = {};
+let publicRsvpPeople = [];
+
+function mainMenuButton() {
+  return `<button class="secondary main-menu-button" onclick="nav('home')">← Main Menu</button>`;
+}
+
+function renderRsvp() {
+  return `<main class="content-page">${mainMenuButton()}<div class="page-heading"><p class="eyebrow">Please respond</p>
+    <h2>Wedding RSVP</h2><p>Please list the name of every adult and child who will be attending.</p></div>
+    <form class="rsvp-form" onsubmit="submitRsvpV062(event)">
+      <h3>Main contact</h3><div class="form-grid">
+        ${field('First name', 'first_name', true)}${field('Last name', 'last_name', true)}
+        ${field('Street address', 'street_address', true, true)}${field('City', 'city', true)}
+        ${field('State', 'state', true)}${field('ZIP code', 'zip_code', true)}
+        ${field('Phone number', 'phone', true)}${field('Email (optional)', 'email')}
+      </div>
+      <h3>Will you attend?</h3><div class="choice-row">
+        <label><input type="radio" name="attendance" value="attending" checked onchange="updatePeopleFields()"> Yes, I’ll be there</label>
+        <label><input type="radio" name="attendance" value="declined" onchange="updatePeopleFields()"> Sorry, I can’t make it</label>
+      </div>
+      <div id="people-builder">
+        <div class="form-grid">
+          ${numberField('Number of adults', 'adult_count', 1)}${numberField('Number of children', 'child_count', 0)}
+        </div>
+        <div id="named-people"></div>
+      </div>
+      <label class="field wide"><span>Notes, allergies, or special needs</span><textarea name="notes" rows="4"></textarea></label>
+      <div id="rsvp-message"></div><button class="primary" type="submit">Submit RSVP</button>
+    </form></main>`;
+}
+
+function updatePeopleFields() {
+  const form = document.querySelector('.rsvp-form');
+  if (!form) return;
+  const attending = form.querySelector('input[name="attendance"]:checked')?.value === 'attending';
+  const builder = document.getElementById('people-builder');
+  if (builder) builder.style.display = attending ? '' : 'none';
+  if (!attending) return;
+  const adults = Math.max(1, Number(form.elements.adult_count?.value || 1));
+  const children = Math.max(0, Number(form.elements.child_count?.value || 0));
+  const first = form.elements.first_name?.value || '';
+  const last = form.elements.last_name?.value || '';
+  let fields = `<h3>Names of everyone attending</h3><p class="muted">The main contact is included as Adult 1.</p><div class="people-name-grid">`;
+  for (let i=0;i<adults;i++) {
+    fields += `<label class="field"><span>Adult ${i+1}</span><input name="adult_name_${i}" required value="${i===0 ? esc((first+' '+last).trim()) : ''}" placeholder="Full name"></label>`;
+  }
+  for (let i=0;i<children;i++) {
+    fields += `<label class="field"><span>Child ${i+1}</span><input name="child_name_${i}" required placeholder="Full name"></label>`;
+  }
+  fields += `</div>`;
+  const target = document.getElementById('named-people');
+  if (target) target.innerHTML = fields;
+}
+document.addEventListener('input', (e) => {
+  if (e.target?.closest('.rsvp-form') && ['adult_count','child_count','first_name','last_name'].includes(e.target.name)) updatePeopleFields();
+});
+
+async function submitRsvpV062(event) {
+  event.preventDefault();
+  const button = event.target.querySelector('button[type=submit]');
+  const message = document.getElementById('rsvp-message');
+  if (!configured) return message.innerHTML = '<p class="error">The RSVP system has not been connected yet.</p>';
+  button.disabled = true; button.textContent = 'Submitting…';
+  const form = new FormData(event.target);
+  const attendance = form.get('attendance');
+  const adultCount = attendance === 'attending' ? Number(form.get('adult_count') || 0) : 0;
+  const childCount = attendance === 'attending' ? Number(form.get('child_count') || 0) : 0;
+  const people = [];
+  if (attendance === 'attending') {
+    for (let i=0;i<adultCount;i++) people.push({ person_name: String(form.get(`adult_name_${i}`)||'').trim(), person_type:'adult', sort_order:i });
+    for (let i=0;i<childCount;i++) people.push({ person_name: String(form.get(`child_name_${i}`)||'').trim(), person_type:'child', sort_order:adultCount+i });
+    if (people.some(p => !p.person_name)) { button.disabled=false; button.textContent='Submit RSVP'; return message.innerHTML='<p class="error">Please enter a name for everyone attending.</p>'; }
+  }
+  const payload = {
+    invitation_id:null, first_name:String(form.get('first_name')).trim(), last_name:String(form.get('last_name')).trim(),
+    street_address:String(form.get('street_address')).trim(), city:String(form.get('city')).trim(), state:String(form.get('state')).trim(),
+    zip_code:String(form.get('zip_code')).trim(), phone:String(form.get('phone')).trim(), email:String(form.get('email')||'').trim()||null,
+    attendance, adult_count:adultCount, child_count:childCount,
+    additional_guests: people.slice(1).map(p=>p.person_name).join(', ') || null,
+    notes:String(form.get('notes')||'').trim()||null, verification_status:'needs_review', submitted_by_admin:false
+  };
+  const { data, error } = await db.from('rsvps').insert(payload).select('id').single();
+  if (error) { button.disabled=false; button.textContent='Submit RSVP'; return message.innerHTML=`<p class="error">${esc(error.message)}</p>`; }
+  if (people.length) {
+    const { error: peopleError } = await db.from('rsvp_people').insert(people.map(p=>({...p,rsvp_id:data.id})));
+    if (peopleError) { button.disabled=false; button.textContent='Submit RSVP'; return message.innerHTML=`<p class="error">RSVP saved, but the guest names could not be saved: ${esc(peopleError.message)}</p>`; }
+  }
+  event.target.outerHTML = `<div class="success-card"><div class="big-icon">♥</div><h2>Thank you!</h2><p>Your RSVP and guest names have been received.</p>${mainMenuButton()}</div>`;
+}
+
+function renderDetails() {
+  const s = publicWeddingSettings;
+  const details = s.details_text || 'Additional wedding-day details will be posted here.';
+  const parking = s.parking_text || '';
+  const query = encodeURIComponent(s.map_query || '4-H Building Milbank South Dakota');
+  return `<main class="content-page">${mainMenuButton()}<div class="page-heading"><p class="eyebrow">Save the date</p><h2>Wedding Details</h2></div>
+    <section class="detail-card"><div class="big-icon">📅</div><div><h3>${esc(s.wedding_date_label || 'Saturday, November 14, 2026')}</h3><p>${esc(s.ceremony_time_label || 'The ceremony begins at 10:00 AM.')}</p></div></section>
+    <section class="detail-card"><div class="big-icon">📍</div><div><h3>${esc(s.venue_name || '4-H Building')}</h3><p>${esc(s.venue_address || 'Milbank, South Dakota')}</p></div></section>
+    <section class="admin-panel public-details-copy"><h3>Wedding Day Information</h3><p>${esc(details).replace(/\n/g,'<br>')}</p>${parking ? `<h3>Parking & Directions</h3><p>${esc(parking).replace(/\n/g,'<br>')}</p>`:''}</section>
+    <section class="map-card"><iframe title="Wedding venue map" loading="lazy" referrerpolicy="no-referrer-when-downgrade" src="https://www.google.com/maps?q=${query}&output=embed"></iframe></section>
+  </main>`;
+}
+
+function renderRegistry() {
+  const amazon = safeUrl(publicWeddingSettings.amazon_registry_url);
+  const other = safeUrl(publicWeddingSettings.other_registry_url);
+  let body = '';
+  if (amazon || other) body += `<div class="registry-link-row">${amazon?`<a class="primary" target="_blank" rel="noopener" href="${esc(amazon)}">View Our Amazon Registry</a>`:''}${other?`<a class="secondary registry-external" target="_blank" rel="noopener" href="${esc(other)}">View Other Registry</a>`:''}</div>`;
+  if (publicRegistryLoading) body += `<div class="loading-card">Loading our gift list…</div>`;
+  else if (publicRegistry.length) body += `<h3 class="gift-list-heading">Gifts You Can Bring to the Wedding</h3><div class="public-registry-grid">${publicRegistry.map(renderPublicRegistryItem).join('')}</div>`;
+  else body += `<div class="empty-state"><div class="big-icon">🎁</div><h3>Gift list coming soon</h3><p>Registry links and gift ideas will appear here.</p></div>`;
+  return `<main class="content-page">${mainMenuButton()}<div class="page-heading"><p class="eyebrow">With gratitude</p><h2>Gift Registry</h2><p>Your presence means so much to us. Gifts are optional.</p></div>${body}</main>`;
+}
+
+function renderPhotos() {
+  let body = publicPhotosLoading ? '<div class="loading-card">Loading photos…</div>' : (publicPhotos.length ? `<div class="public-photo-grid">${publicPhotos.map(renderPublicPhoto).join('')}</div>` : '<div class="empty-state"><div class="big-icon">📷</div><h3>Photos coming soon</h3></div>');
+  return `<main class="content-page">${mainMenuButton()}<div class="page-heading"><p class="eyebrow">Our memories</p><h2>Photo Album</h2><p>Photos selected by Jordan and Rochelle.</p></div>${body}</main>`;
+}
+
+const baseLoadAdminV062 = loadAdmin;
+loadAdmin = async function() {
+  await baseLoadAdminV062();
+  if (!db || !session) return;
+  const [peopleRes, settingsRes] = await Promise.all([
+    db.from('rsvp_people').select('*').order('sort_order'),
+    db.from('wedding_settings').select('*').eq('id', 1).maybeSingle()
+  ]);
+  adminData.rsvpPeople = peopleRes.data || [];
+  adminData.settings = settingsRes.data || {};
+  render();
+};
+
+const baseLoadPublicRegistryV062 = loadPublicRegistry;
+loadPublicRegistry = async function() {
+  await baseLoadPublicRegistryV062();
+  if (db) {
+    const {data} = await db.from('wedding_settings').select('*').eq('id',1).maybeSingle();
+    publicWeddingSettings = data || {};
+    render();
+  }
+};
+
+const baseRenderAdminViewV062 = renderAdminView;
+renderAdminView = function() {
+  if (adminView === 'settings') return renderWeddingSettingsV062();
+  if (adminView === 'registry') return renderRegistryManagerV062();
+  if (adminView === 'invitations') return renderInvitationsV062();
+  const html = baseRenderAdminViewV062();
+  if (adminView === 'review' || adminView === 'guests') setTimeout(enhanceGuestNamesV062,0);
+  return html;
+};
+
+function enhanceGuestNamesV062() {
+  // Named attendees are available to the profile/review screens without changing the existing layout.
+  document.querySelectorAll('[data-rsvp-id]').forEach(()=>{});
+}
+
+function renderInvitationsV062() {
+  const original = renderInvitations();
+  return original
+    .replace('Import CSV</button>', 'Import Excel / CSV</button>')
+    .replace('accept=".csv,text/csv" onchange="importInvitationsCsv(event)"', 'accept=".xlsx,.xls,.csv" onchange="importInvitationsExcelV062(event)"');
+}
+
+async function importInvitationsExcelV062(event) {
+  const file = event.target.files?.[0]; event.target.value='';
+  if (!file) return;
+  try {
+    const wb = XLSX.read(await file.arrayBuffer(), {type:'array'});
+    const rows = XLSX.utils.sheet_to_json(wb.Sheets[wb.SheetNames[0]], {defval:''});
+    if (!rows.length) return toast('The spreadsheet has no invitation rows.','error');
+    const norm = rows.map(r => {
+      const get=(...keys)=>{ for(const k of keys){ const found=Object.keys(r).find(x=>x.toLowerCase().replace(/[^a-z0-9]/g,'')===k); if(found) return r[found]; } return ''; };
+      const first=String(get('primaryfirstname','firstname','first')||'').trim();
+      const last=String(get('primarylastname','lastname','last')||'').trim();
+      return {
+        household_name: `${first} ${last}`.trim(),
+        primary_first_name:first, primary_last_name:last,
+        street_address:String(get('streetaddress','address')||'').trim()||null,
+        city:String(get('city')||'').trim()||null, state:String(get('state')||'').trim()||null,
+        zip_code:String(get('zipcode','zip')||'').trim()||null, phone:String(get('phone','phonenumber')||'').trim()||null,
+        email:String(get('email')||'').trim()||null, max_guests:Number(get('maxguests','guests')||1)||1, status:'invited'
+      };
+    }).filter(r=>r.primary_first_name && r.primary_last_name);
+    if (!norm.length) return toast('Could not find first and last name columns.','error');
+    if (!confirm(`Import ${norm.length} invitations? Household names will match the main guest name.`)) return;
+    const {error}=await db.from('invitations').insert(norm);
+    if(error) return toast(error.message,'error');
+    toast(`${norm.length} invitations imported.`); await loadAdmin();
+  } catch(e) { toast(`Could not read spreadsheet: ${e.message}`,'error'); }
+}
+
+function renderRegistryManagerV062() {
+  const base = renderRegistryManager();
+  return base.replace(
+    '<button class="primary" onclick="openRegistryDialog()">Add Registry Item</button>',
+    '<div class="heading-actions"><button class="secondary" onclick="document.getElementById(\'gift-import\').click()">Import Gift List</button><input id="gift-import" hidden type="file" accept=".xlsx,.xls,.csv" onchange="importGiftListV062(event)"><button class="primary" onclick="openRegistryDialog()">Add Gift</button></div>'
+  );
+}
+
+async function importGiftListV062(event) {
+  const file=event.target.files?.[0]; event.target.value=''; if(!file) return;
+  try {
+    const wb=XLSX.read(await file.arrayBuffer(),{type:'array'});
+    const rows=XLSX.utils.sheet_to_json(wb.Sheets[wb.SheetNames[0]],{defval:''});
+    const start=registryItemsSorted().length*10+10;
+    const items=rows.map((r,i)=>{
+      const keys=Object.fromEntries(Object.entries(r).map(([k,v])=>[k.toLowerCase().replace(/[^a-z0-9]/g,''),v]));
+      return {title:String(keys.title||keys.gift||keys.item||'').trim(),description:String(keys.description||'').trim()||null,store_name:String(keys.store||keys.storename||'').trim()||null,item_url:String(keys.url||keys.link||keys.itemurl||'').trim()||null,image_url:String(keys.image||keys.imageurl||'').trim()||null,is_active:true,sort_order:start+i*10};
+    }).filter(x=>x.title);
+    if(!items.length) return toast('Your gift list needs a Title, Gift, or Item column.','error');
+    if(!confirm(`Import ${items.length} gift items?`)) return;
+    const {error}=await db.from('registry_items').insert(items); if(error) return toast(error.message,'error');
+    toast(`${items.length} gifts imported.`); await loadAdmin();
+  } catch(e){toast(`Could not read gift list: ${e.message}`,'error');}
+}
+
+function renderWeddingSettingsV062() {
+  const s=adminData.settings||{};
+  return `<div class="admin-view"><div class="view-heading"><div><p class="eyebrow">Public website</p><h1>Wedding Details & Registry Links</h1><p>Edit what guests see without changing code.</p></div></div>
+  <form class="admin-panel settings-form" onsubmit="saveWeddingSettingsV062(event)">
+    <div class="form-grid">
+      <label class="field"><span>Venue name</span><input name="venue_name" value="${esc(s.venue_name||'4-H Building')}"></label>
+      <label class="field"><span>Venue address / location</span><input name="venue_address" value="${esc(s.venue_address||'Milbank, South Dakota')}"></label>
+      <label class="field wide"><span>Map search</span><input name="map_query" value="${esc(s.map_query||'4-H Building Milbank South Dakota')}"><small>Use the venue name plus city/state if the map marker needs adjusting.</small></label>
+      <label class="field"><span>Wedding date label</span><input name="wedding_date_label" value="${esc(s.wedding_date_label||'Saturday, November 14, 2026')}"></label>
+      <label class="field"><span>Ceremony time text</span><input name="ceremony_time_label" value="${esc(s.ceremony_time_label||'The ceremony begins at 10:00 AM.')}"></label>
+      <label class="field wide"><span>Wedding day details</span><textarea name="details_text" rows="6">${esc(s.details_text||'')}</textarea></label>
+      <label class="field wide"><span>Parking & directions</span><textarea name="parking_text" rows="4">${esc(s.parking_text||'')}</textarea></label>
+      <label class="field wide"><span>Amazon Wedding Registry URL</span><input type="url" name="amazon_registry_url" value="${esc(s.amazon_registry_url||'')}" placeholder="Paste your Amazon registry link"></label>
+      <label class="field wide"><span>Other registry URL (optional)</span><input type="url" name="other_registry_url" value="${esc(s.other_registry_url||'')}" placeholder="Another registry or gift page"></label>
+    </div><button class="primary" type="submit">Save Wedding Details</button>
+  </form></div>`;
+}
+
+async function saveWeddingSettingsV062(event) {
+  event.preventDefault(); const f=new FormData(event.target);
+  const row={id:1};
+  ['venue_name','venue_address','map_query','wedding_date_label','ceremony_time_label','details_text','parking_text','amazon_registry_url','other_registry_url'].forEach(k=>row[k]=String(f.get(k)||'').trim()||null);
+  const {error}=await db.from('wedding_settings').upsert(row);
+  if(error) return toast(error.message,'error');
+  adminData.settings=row; publicWeddingSettings=row; toast('Wedding details saved.'); render();
+}
+
+// Load public settings alongside the existing public registry initialization.
+if (!isAdminPortal && configured) {
+  db.from('wedding_settings').select('*').eq('id',1).maybeSingle().then(({data})=>{ publicWeddingSettings=data||{}; render(); });
+}
+
+
+const baseRenderGuestProfileV062 = renderGuestProfile;
+renderGuestProfile = function(record) {
+  let html = baseRenderGuestProfileV062(record);
+  if (record.rsvp) {
+    const people=(adminData.rsvpPeople||[]).filter(p=>p.rsvp_id===record.rsvp.id).sort((a,b)=>a.sort_order-b.sort_order);
+    if (people.length) {
+      const block=`<section class="profile-section"><div class="profile-section-heading"><h3>Everyone attending</h3></div><div class="named-attendee-list">${people.map(p=>`<div><strong>${esc(p.person_name)}</strong><span>${titleCase(p.person_type)}</span></div>`).join('')}</div></section>`;
+      html=html.replace(`${record.rsvp?.notes ? `<section class="profile-section">` : '<section class="profile-section">'}`, block + `${record.rsvp?.notes ? `<section class="profile-section">` : '<section class="profile-section">'}`);
+    }
+  }
+  return html;
+};
+
+saveInvitation = async function(event, id='') {
+  event.preventDefault();
+  const submit=event.target.querySelector('[type=submit]'); submit.disabled=true;
+  const form=new FormData(event.target);
+  const first=String(form.get('primary_first_name')||'').trim(), last=String(form.get('primary_last_name')||'').trim();
+  const payload=Object.fromEntries(form.entries());
+  payload.household_name=`${first} ${last}`.trim();
+  payload.primary_first_name=first; payload.primary_last_name=last; payload.max_guests=Number(payload.max_guests||1);
+  for(const key of ['phone','email','street_address','city','state','zip_code','private_notes']) payload[key]=String(payload[key]||'').trim()||null;
+  const result=id?await db.from('invitations').update(payload).eq('id',id):await db.from('invitations').insert(payload);
+  if(result.error){toast(result.error.message,'error');submit.disabled=false;return;}
+  closeModal(); toast(id?'Invitation updated.':'Invitation added.'); await loadAdmin();
+};
