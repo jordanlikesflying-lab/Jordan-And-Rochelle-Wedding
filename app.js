@@ -1653,3 +1653,304 @@ async function deleteRegistryItem(id) {
   toast('Registry item deleted.');
   await loadAdmin();
 }
+
+// Command Center v0.6.0 — Photo Manager
+const PHOTO_BUCKET = 'wedding-photos';
+let photoSearch = '';
+let selectedPhotoId = null;
+let photoUrlCache = new Map();
+let publicPhotos = [];
+let publicPhotoUrls = new Map();
+let publicPhotosLoading = false;
+let publicPhotosError = '';
+
+function photoFileName(path = '') {
+  const part = String(path).split('/').pop() || 'photo';
+  return part.replace(/^[0-9a-f-]{20,}-/i, '');
+}
+
+async function signedPhotoUrl(path, expiresIn = 3600) {
+  if (!db || !path) return '';
+  const { data, error } = await db.storage.from(PHOTO_BUCKET).createSignedUrl(path, expiresIn);
+  if (error) return '';
+  return data?.signedUrl || '';
+}
+
+async function hydrateAdminPhotoUrls() {
+  if (!db || !session) return;
+  const missing = adminData.photos.filter((photo) => !photoUrlCache.has(photo.storage_path));
+  await Promise.all(missing.map(async (photo) => {
+    const url = await signedPhotoUrl(photo.storage_path, 3600);
+    photoUrlCache.set(photo.storage_path, url);
+  }));
+  if (isAdminPortal && page === 'admin' && adminView === 'photos') render();
+}
+
+async function loadPublicPhotos() {
+  if (!db || publicPhotosLoading) return;
+  publicPhotosLoading = true;
+  publicPhotosError = '';
+  if (page === 'photos') render();
+  const { data, error } = await db.from('photos').select('*').eq('show_in_guest_album', true).order('sort_order', { ascending: true }).order('created_at', { ascending: true });
+  if (error) {
+    publicPhotos = [];
+    publicPhotosError = error.message;
+    publicPhotosLoading = false;
+    if (page === 'photos') render();
+    return;
+  }
+  publicPhotos = data || [];
+  publicPhotoUrls = new Map();
+  await Promise.all(publicPhotos.map(async (photo) => {
+    publicPhotoUrls.set(photo.storage_path, await signedPhotoUrl(photo.storage_path, 1800));
+  }));
+  publicPhotosLoading = false;
+  if (page === 'photos') render();
+}
+
+// Extend public navigation to load both live registry items and the curated guest album.
+function nav(next) {
+  if (next === 'admin' && !isAdminPortal) return;
+  page = next;
+  render();
+  window.scrollTo({ top: 0, behavior: 'smooth' });
+  if (next === 'admin') loadAdmin();
+  if (next === 'registry' && !isAdminPortal) loadPublicRegistry();
+  if (next === 'photos' && !isAdminPortal) loadPublicPhotos();
+}
+
+function renderPhotos() {
+  let body = '';
+  if (!configured) {
+    body = `<div class="empty-state"><div class="big-icon">📷</div><h3>Photo album coming soon</h3><p>The album is not connected yet.</p></div>`;
+  } else if (publicPhotosLoading) {
+    body = `<div class="loading-card">Loading our photos…</div>`;
+  } else if (publicPhotosError) {
+    body = `<div class="error-card"><h3>We couldn't load the photo album.</h3><p>Please try again in a moment.</p><button class="primary" onclick="loadPublicPhotos()">Try Again</button></div>`;
+  } else if (!publicPhotos.length) {
+    body = `<div class="empty-state"><div class="big-icon">📷</div><h3>Photos coming soon</h3><p>Jordan and Rochelle will share selected photos here.</p></div>`;
+  } else {
+    body = `<div class="public-photo-grid">${publicPhotos.map((photo) => {
+      const url = publicPhotoUrls.get(photo.storage_path) || '';
+      return `<figure class="public-photo-card">${url ? `<img src="${esc(url)}" alt="${esc(photo.caption || 'Jordan and Rochelle wedding photo')}" loading="lazy">` : '<div class="photo-load-failed">Photo unavailable</div>'}${photo.caption ? `<figcaption>${esc(photo.caption)}</figcaption>` : ''}</figure>`;
+    }).join('')}</div>`;
+  }
+  return `<main class="content-page"><div class="page-heading"><p class="eyebrow">Our memories</p><h2>Photo Album</h2><p>A collection of favorite photos selected by Jordan and Rochelle.</p></div>${body}</main>`;
+}
+
+function setAdminView(next) {
+  adminView = next;
+  render();
+  if (next === 'photos') hydrateAdminPhotoUrls();
+}
+
+function renderAdminView() {
+  if (adminError) return `<div class="error-card"><h2>Could not load the Command Center</h2><p>${esc(adminError)}</p><button class="primary" onclick="loadAdmin()">Try Again</button></div>`;
+  if (adminView === 'dashboard') return renderDashboard();
+  if (adminView === 'review') return renderReview();
+  if (adminView === 'invitations') return renderInvitations();
+  if (adminView === 'guests') return renderGuestProfiles();
+  if (adminView === 'jobs') return renderJobs();
+  if (adminView === 'registry') return renderRegistryManager();
+  if (adminView === 'photos') return renderPhotoManager();
+  if (adminView === 'summary') return renderSummary();
+  if (adminView === 'settings') return placeholderAdminPage('Settings', 'Wedding details and public-page visibility controls will be added here.');
+  return renderDashboard();
+}
+
+function sortedPhotos() {
+  return [...adminData.photos].sort((a, b) => {
+    const order = Number(a.sort_order || 0) - Number(b.sort_order || 0);
+    if (order) return order;
+    return String(a.created_at || '').localeCompare(String(b.created_at || ''));
+  });
+}
+
+function setPhotoSearch(value) {
+  photoSearch = value;
+  render();
+  const input = document.querySelector('#photo-search');
+  input?.focus();
+  input?.setSelectionRange(value.length, value.length);
+}
+
+function selectPhoto(id) {
+  selectedPhotoId = id;
+  render();
+}
+
+function photoThumb(photo, className = '') {
+  const url = photoUrlCache.get(photo.storage_path) || '';
+  return url ? `<img class="${className}" src="${esc(url)}" alt="${esc(photo.caption || photoFileName(photo.storage_path))}" loading="lazy">` : `<div class="photo-placeholder ${className}">📷</div>`;
+}
+
+function renderPhotoManager() {
+  const all = sortedPhotos();
+  const query = photoSearch.trim().toLowerCase();
+  const filtered = query ? all.filter((photo) => [photo.caption, photo.storage_path].some((value) => String(value || '').toLowerCase().includes(query))) : all;
+  const guestCount = all.filter((photo) => photo.show_in_guest_album).length;
+  let selected = filtered.find((photo) => photo.id === selectedPhotoId) || null;
+  if (!selected && filtered.length) {
+    selected = filtered[0];
+    selectedPhotoId = selected.id;
+  }
+  if (all.some((photo) => !photoUrlCache.has(photo.storage_path))) setTimeout(hydrateAdminPhotoUrls, 0);
+
+  return `<div class="admin-view">
+    <div class="view-heading"><div><p class="eyebrow">Private library & guest album</p><h1>Photo Manager</h1><p>Keep your full photo library private and choose exactly which pictures guests can see.</p></div><button class="primary" onclick="openPhotoUploadDialog()">Upload Photos</button></div>
+    <section class="registry-metric-grid">
+      ${metricCard('Private library', all.length, 'Total uploaded photos')}
+      ${metricCard('Guest album', guestCount, 'Visible to guests')}
+      ${metricCard('Private only', all.length - guestCount, 'Jordan & Rochelle only')}
+    </section>
+    <div class="registry-toolbar"><input id="photo-search" type="search" value="${esc(photoSearch)}" placeholder="Search captions or file names" oninput="setPhotoSearch(this.value)"><span>${filtered.length} photo${filtered.length === 1 ? '' : 's'}</span></div>
+    <div class="photo-manager-split">
+      <aside class="photo-admin-grid">${filtered.length ? filtered.map((photo) => `<button class="photo-admin-tile ${selected?.id === photo.id ? 'active' : ''}" onclick="selectPhoto('${photo.id}')">${photoThumb(photo)}<span class="photo-tile-copy"><strong>${esc(photo.caption || photoFileName(photo.storage_path))}</strong><small>${photo.show_in_guest_album ? 'Guest album' : 'Private only'}</small></span></button>`).join('') : '<p class="muted">No matching photos.</p>'}</aside>
+      <section class="photo-detail">${selected ? renderPhotoDetail(selected, all) : `<div class="empty-state admin-empty"><div class="big-icon">📷</div><h2>No photos yet</h2><p>Upload photos to create your private library.</p><button class="primary" onclick="openPhotoUploadDialog()">Upload Photos</button></div>`}</section>
+    </div>
+    ${guestCount ? `<section class="admin-panel photo-preview-panel"><div class="panel-heading"><div><h2>Guest album preview</h2><p class="muted">Only these selected photos appear on the public website.</p></div></div><div class="photo-preview-grid">${all.filter((photo) => photo.show_in_guest_album).map((photo) => `<figure>${photoThumb(photo)}${photo.caption ? `<figcaption>${esc(photo.caption)}</figcaption>` : ''}</figure>`).join('')}</div></section>` : ''}
+  </div>`;
+}
+
+function renderPhotoDetail(photo, all) {
+  const index = all.findIndex((entry) => entry.id === photo.id);
+  return `<article class="photo-detail-card">
+    <div class="registry-detail-header"><div><p class="eyebrow">Photo</p><h2>${esc(photo.caption || photoFileName(photo.storage_path))}</h2><div class="profile-pills"><span class="registry-visibility ${photo.show_in_guest_album ? 'visible' : 'hidden'}">${photo.show_in_guest_album ? 'Visible to guests' : 'Private only'}</span></div></div><div class="profile-actions"><button class="secondary" onclick="openPhotoEditDialog('${photo.id}')">Edit</button><button class="danger-button" onclick="deletePhoto('${photo.id}')">Delete</button></div></div>
+    <div class="photo-detail-image">${photoThumb(photo)}</div>
+    <div class="profile-info-grid">
+      <div class="profile-info"><span>File</span><strong>${esc(photoFileName(photo.storage_path))}</strong></div>
+      <div class="profile-info"><span>Guest order</span><strong>${index + 1} of ${all.length}</strong></div>
+      <div class="profile-info"><span>Uploaded</span><strong>${formatDate(photo.created_at)}</strong></div>
+      <div class="profile-info"><span>Visibility</span><strong>${photo.show_in_guest_album ? 'Guest album' : 'Private library only'}</strong></div>
+    </div>
+    <section class="profile-section"><div class="registry-action-grid">
+      <button class="secondary" onclick="toggleGuestAlbum('${photo.id}')">${photo.show_in_guest_album ? 'Remove from Guest Album' : 'Add to Guest Album'}</button>
+      <button class="secondary" ${index <= 0 ? 'disabled' : ''} onclick="movePhoto('${photo.id}', -1)">Move Earlier</button>
+      <button class="secondary" ${index >= all.length - 1 ? 'disabled' : ''} onclick="movePhoto('${photo.id}', 1)">Move Later</button>
+    </div></section>
+  </article>`;
+}
+
+function openPhotoUploadDialog() {
+  document.body.insertAdjacentHTML('beforeend', `<div class="modal-backdrop" id="modal"><form class="modal-card" onsubmit="uploadPhotos(event)">
+    <div class="modal-heading"><h2>Upload Photos</h2><button type="button" onclick="closeModal()">×</button></div>
+    <label class="field wide"><span>Choose photo files</span><input type="file" name="photos" accept="image/jpeg,image/png,image/webp,image/gif" multiple required></label>
+    <label class="field wide"><span>Caption (optional — used when uploading one photo)</span><input name="caption" placeholder="Our engagement photo"></label>
+    <label class="choice-card"><input type="checkbox" name="show_in_guest_album"><span><strong>Add to guest album</strong><small>Guests will be able to see uploaded photos immediately.</small></span></label>
+    <p class="muted">Your private library is visible only in the Command Center. You can change guest visibility at any time.</p>
+    <div id="photo-upload-progress"></div>
+    <div class="modal-actions"><button type="button" class="secondary" onclick="closeModal()">Cancel</button><button class="primary" type="submit">Upload</button></div>
+  </form></div>`);
+}
+
+async function uploadPhotos(event) {
+  event.preventDefault();
+  const form = event.target;
+  const files = [...(form.elements.photos.files || [])];
+  if (!files.length) return toast('Choose at least one photo.', 'error');
+  const button = form.querySelector('button[type=submit]');
+  const progress = document.getElementById('photo-upload-progress');
+  button.disabled = true;
+  const show = form.elements.show_in_guest_album.checked;
+  const singleCaption = String(form.elements.caption.value || '').trim();
+  const existing = sortedPhotos();
+  let nextOrder = existing.length ? Math.max(...existing.map((photo) => Number(photo.sort_order || 0))) + 1 : 0;
+
+  for (let i = 0; i < files.length; i += 1) {
+    const file = files[i];
+    progress.innerHTML = `<p class="muted">Uploading ${i + 1} of ${files.length}: ${esc(file.name)}</p>`;
+    const safeName = file.name.replace(/[^a-zA-Z0-9._-]+/g, '-');
+    const path = `library/${crypto.randomUUID()}-${safeName}`;
+    const { error: uploadError } = await db.storage.from(PHOTO_BUCKET).upload(path, file, { cacheControl: '3600', upsert: false, contentType: file.type });
+    if (uploadError) {
+      button.disabled = false;
+      return toast(`Could not upload ${file.name}: ${uploadError.message}`, 'error');
+    }
+    const { error: rowError } = await db.from('photos').insert({
+      storage_path: path,
+      caption: files.length === 1 ? (singleCaption || null) : null,
+      show_in_guest_album: show,
+      sort_order: nextOrder++,
+      uploaded_by: session.user.id
+    });
+    if (rowError) {
+      await db.storage.from(PHOTO_BUCKET).remove([path]);
+      button.disabled = false;
+      return toast(`Photo uploaded but could not be saved: ${rowError.message}`, 'error');
+    }
+  }
+  closeModal();
+  toast(`${files.length} photo${files.length === 1 ? '' : 's'} uploaded.`);
+  photoUrlCache.clear();
+  await loadAdmin();
+  await hydrateAdminPhotoUrls();
+}
+
+function openPhotoEditDialog(id) {
+  const photo = adminData.photos.find((item) => item.id === id);
+  if (!photo) return;
+  document.body.insertAdjacentHTML('beforeend', `<div class="modal-backdrop" id="modal"><form class="modal-card" onsubmit="savePhotoEdit(event, '${id}')">
+    <div class="modal-heading"><h2>Edit Photo</h2><button type="button" onclick="closeModal()">×</button></div>
+    <label class="field wide"><span>Caption</span><input name="caption" value="${esc(photo.caption || '')}" placeholder="Optional caption"></label>
+    <label class="choice-card"><input type="checkbox" name="show_in_guest_album" ${photo.show_in_guest_album ? 'checked' : ''}><span><strong>Show in guest album</strong><small>Turn this off to keep the photo private.</small></span></label>
+    <div class="modal-actions"><button type="button" class="secondary" onclick="closeModal()">Cancel</button><button class="primary" type="submit">Save Photo</button></div>
+  </form></div>`);
+}
+
+async function savePhotoEdit(event, id) {
+  event.preventDefault();
+  const form = event.target;
+  const { error } = await db.from('photos').update({
+    caption: String(form.elements.caption.value || '').trim() || null,
+    show_in_guest_album: form.elements.show_in_guest_album.checked
+  }).eq('id', id);
+  if (error) return toast(error.message, 'error');
+  closeModal();
+  toast('Photo updated.');
+  await loadAdmin();
+  await hydrateAdminPhotoUrls();
+}
+
+async function toggleGuestAlbum(id) {
+  const photo = adminData.photos.find((item) => item.id === id);
+  if (!photo) return;
+  const { error } = await db.from('photos').update({ show_in_guest_album: !photo.show_in_guest_album }).eq('id', id);
+  if (error) return toast(error.message, 'error');
+  toast(photo.show_in_guest_album ? 'Removed from guest album.' : 'Added to guest album.');
+  await loadAdmin();
+  await hydrateAdminPhotoUrls();
+}
+
+async function movePhoto(id, direction) {
+  const all = sortedPhotos();
+  const index = all.findIndex((photo) => photo.id === id);
+  const swapIndex = index + direction;
+  if (index < 0 || swapIndex < 0 || swapIndex >= all.length) return;
+  const current = all[index];
+  const swap = all[swapIndex];
+  const currentOrder = Number(current.sort_order || index);
+  const swapOrder = Number(swap.sort_order || swapIndex);
+  const [a, b] = await Promise.all([
+    db.from('photos').update({ sort_order: swapOrder }).eq('id', current.id),
+    db.from('photos').update({ sort_order: currentOrder }).eq('id', swap.id)
+  ]);
+  if (a.error || b.error) return toast((a.error || b.error).message, 'error');
+  await loadAdmin();
+  await hydrateAdminPhotoUrls();
+}
+
+async function deletePhoto(id) {
+  const photo = adminData.photos.find((item) => item.id === id);
+  if (!photo) return;
+  const label = photo.caption || photoFileName(photo.storage_path);
+  if (!window.confirm(`Delete “${label}”? This will permanently remove the photo file and its album record.`)) return;
+  const { error: storageError } = await db.storage.from(PHOTO_BUCKET).remove([photo.storage_path]);
+  if (storageError) return toast(storageError.message, 'error');
+  const { error: rowError } = await db.from('photos').delete().eq('id', id);
+  if (rowError) return toast(rowError.message, 'error');
+  photoUrlCache.delete(photo.storage_path);
+  selectedPhotoId = null;
+  toast('Photo deleted.');
+  await loadAdmin();
+  await hydrateAdminPhotoUrls();
+}

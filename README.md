@@ -70,3 +70,11 @@ No new Supabase tables are required. This release uses the existing `wedding_job
 - Preview the public registry from the Command Center.
 - The public Gift Registry page now loads only active items from Supabase.
 - No database schema changes are required if your existing `registry_items` table matches the project schema.
+
+## v0.6.0 — Photo Manager
+
+This release adds the private photo library and curated public guest album.
+
+Before using Photo Manager, run `v0.6.0-photo-security.sql` once in the Supabase SQL Editor. This changes the `wedding-photos` Storage bucket from public to private. The existing Storage RLS policies then allow only selected guest-album photos to be read by public visitors, while admins can manage the full library.
+
+Photo Manager supports multi-photo upload, captions, guest-album visibility, ordering, preview, and permanent deletion from both Storage and the `photos` table.
