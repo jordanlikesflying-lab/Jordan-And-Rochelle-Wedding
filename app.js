@@ -558,5 +558,296 @@ if (db) {
   });
 }
 
+
+// Command Center v2 enhancements
+let selectedReviewId = null;
+let reviewSearch = '';
+
+function toast(message, type = 'success') {
+  let region = document.getElementById('toast-region');
+  if (!region) {
+    region = document.createElement('div');
+    region.id = 'toast-region';
+    region.className = 'toast-region';
+    region.setAttribute('aria-live', 'polite');
+    document.body.appendChild(region);
+  }
+  const item = document.createElement('div');
+  item.className = `toast toast-${type}`;
+  item.textContent = message;
+  region.appendChild(item);
+  requestAnimationFrame(() => item.classList.add('show'));
+  setTimeout(() => {
+    item.classList.remove('show');
+    setTimeout(() => item.remove(), 220);
+  }, 3200);
+}
+
+function renderReview() {
+  const all = needsReview();
+  const query = reviewSearch.trim().toLowerCase();
+  const filtered = query ? all.filter((item) => [item.first_name, item.last_name, item.phone, item.email, item.city, item.additional_guests]
+    .some((value) => String(value || '').toLowerCase().includes(query))) : all;
+
+  if (!selectedReviewId || !filtered.some((item) => item.id === selectedReviewId)) {
+    selectedReviewId = filtered[0]?.id || null;
+  }
+  const selected = filtered.find((item) => item.id === selectedReviewId);
+
+  return `<div class="admin-view"><div class="view-heading"><div><p class="eyebrow">Guest responses</p><h1>RSVP Review</h1><p>Review one response at a time without losing your place.</p></div></div>
+    ${all.length ? `<div class="review-toolbar"><input type="search" value="${esc(reviewSearch)}" placeholder="Search pending RSVPs" oninput="setReviewSearch(this.value)"><span>${filtered.length} of ${all.length} waiting</span></div>
+    <div class="review-split">
+      <aside class="review-queue">${filtered.length ? filtered.map((item) => `<button class="queue-item ${item.id === selectedReviewId ? 'active' : ''}" onclick="selectReview('${item.id}')"><strong>${esc(item.first_name)} ${esc(item.last_name)}</strong><span>${titleCase(item.attendance)} · ${formatDate(item.created_at)}</span></button>`).join('') : '<p class="muted queue-empty">No matching RSVPs.</p>'}</aside>
+      <section class="review-detail">${selected ? renderReviewDetail(selected) : '<div class="empty-state admin-empty"><h2>No response selected</h2></div>'}</section>
+    </div>` : `<div class="empty-state admin-empty"><div class="big-icon">✓</div><h2>All caught up</h2><p>There are no RSVP submissions waiting for review.</p></div>`}
+  </div>`;
+}
+
+function setReviewSearch(value) {
+  reviewSearch = value;
+  render();
+  const input = document.querySelector('.review-toolbar input');
+  input?.focus();
+  input?.setSelectionRange(value.length, value.length);
+}
+
+function selectReview(id) {
+  selectedReviewId = id;
+  render();
+}
+
+function suggestedInvitations(rsvp) {
+  const last = String(rsvp.last_name || '').toLowerCase();
+  const city = String(rsvp.city || '').toLowerCase();
+  return [...adminData.invitations].sort((a, b) => {
+    const score = (item) => (String(item.primary_last_name || '').toLowerCase() === last ? 3 : 0) +
+      (String(item.household_name || '').toLowerCase().includes(last) ? 2 : 0) +
+      (city && String(item.city || '').toLowerCase() === city ? 1 : 0);
+    return score(b) - score(a) || String(a.household_name).localeCompare(String(b.household_name));
+  });
+}
+
+function renderReviewDetail(rsvp) {
+  const invitationOptions = suggestedInvitations(rsvp).map((invitation) => `<option value="${invitation.id}">${esc(invitation.household_name)} — ${esc(invitation.primary_first_name)} ${esc(invitation.primary_last_name)}</option>`).join('');
+  return `<article class="review-card review-card-detail">
+    <div class="review-card-top"><div><h2>${esc(rsvp.first_name)} ${esc(rsvp.last_name)}</h2><p>${titleCase(rsvp.attendance)} · Submitted ${formatDate(rsvp.created_at)}</p></div>${statusPill(rsvp.verification_status)}</div>
+    <div class="review-details">
+      <div><span>Address</span><strong>${esc(rsvp.street_address)}<br>${esc(rsvp.city)}, ${esc(rsvp.state)} ${esc(rsvp.zip_code)}</strong></div>
+      <div><span>Contact</span><strong>${esc(rsvp.phone)}${rsvp.email ? `<br>${esc(rsvp.email)}` : ''}</strong></div>
+      <div><span>Party</span><strong>${rsvp.adult_count} adult${rsvp.adult_count === 1 ? '' : 's'}, ${rsvp.child_count} child${rsvp.child_count === 1 ? '' : 'ren'}</strong></div>
+      <div><span>Additional guests</span><strong>${esc(rsvp.additional_guests || 'None listed')}</strong></div>
+    </div>
+    ${rsvp.notes ? `<div class="review-notes"><span>Notes</span><p>${esc(rsvp.notes)}</p></div>` : ''}
+    <div class="match-row"><label><span>Suggested invitation matches</span><select id="match-${rsvp.id}"><option value="">Choose a household…</option>${invitationOptions}</select></label><button class="primary" onclick="matchRsvp('${rsvp.id}')">Match & Verify</button></div>
+    <div class="review-actions"><button class="secondary" onclick="openRsvpDialog('${rsvp.id}')">Edit RSVP</button><button class="secondary" onclick="verifyRsvp('${rsvp.id}')">Verify Without Match</button><button class="secondary" onclick="createInvitationFromRsvp('${rsvp.id}')">Create Invitation</button><button class="danger-button" onclick="rejectRsvp('${rsvp.id}')">Reject</button></div>
+  </article>`;
+}
+
+function renderInvitations() {
+  return `<div class="admin-view"><div class="view-heading"><div><p class="eyebrow">Master guest list</p><h1>Invite List</h1><p>${adminData.invitations.length} household invitation${adminData.invitations.length === 1 ? '' : 's'}</p></div><div class="heading-actions"><button class="secondary" onclick="document.getElementById('csv-file').click()">Import CSV</button><button class="secondary" onclick="exportInvitationsCsv()">Export CSV</button><button class="primary" onclick="openInvitationDialog()">Add Invitation</button><input id="csv-file" hidden type="file" accept=".csv,text/csv" onchange="importInvitationsCsv(event)"></div></div>
+    <div class="admin-panel"><div class="toolbar"><input id="invite-search" type="search" placeholder="Search households, names, phone, or email" oninput="filterInvitations(this.value)"></div><div id="invitation-table">${invitationTable(adminData.invitations)}</div></div>
+  </div>`;
+}
+
+function invitationTable(items) {
+  if (!items.length) return '<p class="muted">No invitations found.</p>';
+  return `<div class="table-wrap"><table><thead><tr><th>Household</th><th>Primary contact</th><th>Contact</th><th>Allowed</th><th>Status</th><th>Actions</th></tr></thead><tbody>
+    ${items.map((item) => `<tr><td><strong>${esc(item.household_name)}</strong><br><small>${esc([item.city, item.state].filter(Boolean).join(', '))}</small></td><td>${esc(item.primary_first_name)} ${esc(item.primary_last_name)}</td><td>${esc(item.phone || item.email || '—')}</td><td>${item.max_guests}</td><td>${statusPill(item.status)}</td><td><div class="table-actions"><button onclick="openInvitationDialog('${item.id}')">Edit</button><button class="danger-text" onclick="deleteInvitation('${item.id}')">Delete</button></div></td></tr>`).join('')}
+  </tbody></table></div>`;
+}
+
+function openInvitationDialog(id = null) {
+  const item = id ? adminData.invitations.find((entry) => entry.id === id) : null;
+  const value = (name) => esc(item?.[name] ?? '');
+  document.body.insertAdjacentHTML('beforeend', `<div class="modal-backdrop" id="modal"><form class="modal-card" onsubmit="saveInvitation(event, '${id || ''}')">
+    <div class="modal-heading"><h2>${item ? 'Edit' : 'Add'} Invitation</h2><button type="button" onclick="closeModal()">×</button></div>
+    <div class="form-grid">
+      <label class="field wide"><span>Household name</span><input name="household_name" required value="${value('household_name')}"></label>
+      <label class="field"><span>Primary first name</span><input name="primary_first_name" required value="${value('primary_first_name')}"></label>
+      <label class="field"><span>Primary last name</span><input name="primary_last_name" required value="${value('primary_last_name')}"></label>
+      <label class="field"><span>Maximum guests</span><input type="number" name="max_guests" min="0" max="50" required value="${item?.max_guests ?? 1}"></label>
+      <label class="field"><span>Status</span><select name="status">${['invited','responded','declined','cancelled'].map((s) => `<option value="${s}" ${item?.status === s ? 'selected' : ''}>${titleCase(s)}</option>`).join('')}</select></label>
+      ${['phone','email','street_address','city','state','zip_code'].map((name) => `<label class="field ${name === 'street_address' ? 'wide' : ''}"><span>${titleCase(name)}</span><input name="${name}" value="${value(name)}"></label>`).join('')}
+      <label class="field wide"><span>Private notes</span><textarea name="private_notes" rows="4">${value('private_notes')}</textarea></label>
+    </div>
+    <div class="modal-actions"><button type="button" class="secondary" onclick="closeModal()">Cancel</button><button class="primary" type="submit">Save Invitation</button></div>
+  </form></div>`);
+}
+
+async function saveInvitation(event, id = '') {
+  event.preventDefault();
+  const submit = event.target.querySelector('[type=submit]');
+  submit.disabled = true;
+  const form = new FormData(event.target);
+  const payload = Object.fromEntries(form.entries());
+  payload.max_guests = Number(payload.max_guests || 1);
+  for (const key of ['phone','email','street_address','city','state','zip_code','private_notes']) payload[key] = String(payload[key] || '').trim() || null;
+  const result = id ? await db.from('invitations').update(payload).eq('id', id) : await db.from('invitations').insert(payload);
+  if (result.error) {
+    toast(result.error.message, 'error');
+    submit.disabled = false;
+    return;
+  }
+  closeModal();
+  toast(id ? 'Invitation updated.' : 'Invitation added.');
+  await loadAdmin();
+}
+
+async function deleteInvitation(id) {
+  const item = adminData.invitations.find((entry) => entry.id === id);
+  if (!window.confirm(`Delete ${item?.household_name || 'this invitation'}? Linked RSVPs will remain, but become unmatched.`)) return;
+  const { error } = await db.from('invitations').delete().eq('id', id);
+  if (error) return toast(error.message, 'error');
+  toast('Invitation deleted.');
+  await loadAdmin();
+}
+
+function csvEscape(value) {
+  const text = String(value ?? '');
+  return /[",\n]/.test(text) ? `"${text.replaceAll('"', '""')}"` : text;
+}
+
+function exportInvitationsCsv() {
+  const columns = ['household_name','primary_first_name','primary_last_name','street_address','city','state','zip_code','phone','email','max_guests','status','private_notes'];
+  const csv = [columns.join(','), ...adminData.invitations.map((row) => columns.map((column) => csvEscape(row[column])).join(','))].join('\n');
+  const blob = new Blob([csv], { type: 'text/csv;charset=utf-8' });
+  const url = URL.createObjectURL(blob);
+  const link = document.createElement('a');
+  link.href = url;
+  link.download = `jordan-rochelle-invitations-${new Date().toISOString().slice(0,10)}.csv`;
+  link.click();
+  URL.revokeObjectURL(url);
+  toast('Invitation list exported.');
+}
+
+function parseCsv(text) {
+  const rows = [];
+  let row = [], value = '', quoted = false;
+  for (let i = 0; i < text.length; i++) {
+    const char = text[i], next = text[i + 1];
+    if (char === '"' && quoted && next === '"') { value += '"'; i++; }
+    else if (char === '"') quoted = !quoted;
+    else if (char === ',' && !quoted) { row.push(value); value = ''; }
+    else if ((char === '\n' || char === '\r') && !quoted) {
+      if (char === '\r' && next === '\n') i++;
+      row.push(value); if (row.some((cell) => cell.trim())) rows.push(row); row = []; value = '';
+    } else value += char;
+  }
+  row.push(value); if (row.some((cell) => cell.trim())) rows.push(row);
+  return rows;
+}
+
+async function importInvitationsCsv(event) {
+  const file = event.target.files?.[0];
+  event.target.value = '';
+  if (!file) return;
+  const rows = parseCsv(await file.text());
+  if (rows.length < 2) return toast('The CSV has no invitation rows.', 'error');
+  const headers = rows[0].map((item) => item.trim());
+  const required = ['household_name','primary_first_name','primary_last_name'];
+  if (required.some((name) => !headers.includes(name))) return toast(`CSV must include: ${required.join(', ')}`, 'error');
+  const payload = rows.slice(1).map((cells) => Object.fromEntries(headers.map((header, index) => [header, cells[index]?.trim() || null]))).map((row) => ({
+    household_name: row.household_name,
+    primary_first_name: row.primary_first_name,
+    primary_last_name: row.primary_last_name,
+    street_address: row.street_address,
+    city: row.city,
+    state: row.state,
+    zip_code: row.zip_code,
+    phone: row.phone,
+    email: row.email,
+    max_guests: Number(row.max_guests || 1),
+    status: ['invited','responded','declined','cancelled'].includes(row.status) ? row.status : 'invited',
+    private_notes: row.private_notes
+  })).filter((row) => row.household_name && row.primary_first_name && row.primary_last_name);
+  if (!payload.length) return toast('No valid invitation rows were found.', 'error');
+  if (!window.confirm(`Import ${payload.length} invitation${payload.length === 1 ? '' : 's'}?`)) return;
+  const { error } = await db.from('invitations').insert(payload);
+  if (error) return toast(error.message, 'error');
+  toast(`${payload.length} invitation${payload.length === 1 ? '' : 's'} imported.`);
+  await loadAdmin();
+}
+
+function openRsvpDialog(id) {
+  const item = adminData.rsvps.find((entry) => entry.id === id);
+  if (!item) return;
+  const value = (name) => esc(item[name] ?? '');
+  document.body.insertAdjacentHTML('beforeend', `<div class="modal-backdrop" id="modal"><form class="modal-card" onsubmit="saveRsvpEdit(event, '${id}')">
+    <div class="modal-heading"><h2>Edit RSVP</h2><button type="button" onclick="closeModal()">×</button></div>
+    <div class="form-grid">
+      ${['first_name','last_name','street_address','city','state','zip_code','phone','email'].map((name) => `<label class="field ${name === 'street_address' ? 'wide' : ''}"><span>${titleCase(name)}</span><input name="${name}" ${name !== 'email' ? 'required' : ''} value="${value(name)}"></label>`).join('')}
+      <label class="field"><span>Attendance</span><select name="attendance"><option value="attending" ${item.attendance === 'attending' ? 'selected' : ''}>Attending</option><option value="declined" ${item.attendance === 'declined' ? 'selected' : ''}>Declined</option></select></label>
+      <label class="field"><span>Adults</span><input type="number" min="0" name="adult_count" value="${item.adult_count}"></label>
+      <label class="field"><span>Children</span><input type="number" min="0" name="child_count" value="${item.child_count}"></label>
+      <label class="field wide"><span>Additional guests</span><input name="additional_guests" value="${value('additional_guests')}"></label>
+      <label class="field wide"><span>Notes</span><textarea name="notes" rows="4">${value('notes')}</textarea></label>
+    </div><div class="modal-actions"><button type="button" class="secondary" onclick="closeModal()">Cancel</button><button class="primary" type="submit">Save RSVP</button></div>
+  </form></div>`);
+}
+
+async function saveRsvpEdit(event, id) {
+  event.preventDefault();
+  const form = new FormData(event.target);
+  const payload = Object.fromEntries(form.entries());
+  payload.adult_count = Number(payload.adult_count || 0);
+  payload.child_count = Number(payload.child_count || 0);
+  for (const key of ['email','additional_guests','notes']) payload[key] = String(payload[key] || '').trim() || null;
+  const { error } = await db.from('rsvps').update(payload).eq('id', id);
+  if (error) return toast(error.message, 'error');
+  closeModal();
+  toast('RSVP updated.');
+  await loadAdmin();
+  selectedReviewId = id;
+}
+
+async function updateRsvp(id, changes) {
+  const { error } = await db.from('rsvps').update(changes).eq('id', id);
+  if (error) {
+    toast(error.message, 'error');
+    return false;
+  }
+  await loadAdmin();
+  return true;
+}
+
+async function matchRsvp(id) {
+  const select = document.getElementById(`match-${id}`);
+  if (!select?.value) return toast('Choose an invitation first.', 'error');
+  const invitationId = select.value;
+  const { error } = await db.from('rsvps').update({ invitation_id: invitationId, verification_status: 'verified' }).eq('id', id);
+  if (error) return toast(error.message, 'error');
+  const invitation = adminData.invitations.find((item) => item.id === invitationId);
+  const { error: invitationError } = await db.from('invitations').update({ status: 'responded' }).eq('id', invitationId);
+  if (invitationError) return toast(invitationError.message, 'error');
+  toast(`RSVP matched to ${invitation?.household_name || 'invitation'}.`);
+  selectedReviewId = null;
+  await loadAdmin();
+}
+
+async function verifyRsvp(id) {
+  if (!window.confirm('Verify this RSVP without matching it to an invitation?')) return;
+  if (await updateRsvp(id, { verification_status: 'verified' })) { selectedReviewId = null; toast('RSVP verified.'); }
+}
+
+async function rejectRsvp(id) {
+  if (!window.confirm('Reject this RSVP? It will remain stored but marked rejected.')) return;
+  if (await updateRsvp(id, { verification_status: 'rejected' })) { selectedReviewId = null; toast('RSVP rejected.'); }
+}
+
+async function createInvitationFromRsvp(id) {
+  const rsvp = adminData.rsvps.find((item) => item.id === id);
+  if (!rsvp) return;
+  const household = window.prompt('Household name:', `${rsvp.last_name} Household`);
+  if (!household) return;
+  const maxGuests = Math.max(1, Number(rsvp.adult_count || 0) + Number(rsvp.child_count || 0));
+  const { data, error } = await db.from('invitations').insert({ household_name: household, primary_first_name: rsvp.first_name, primary_last_name: rsvp.last_name, street_address: rsvp.street_address, city: rsvp.city, state: rsvp.state, zip_code: rsvp.zip_code, phone: rsvp.phone, email: rsvp.email, max_guests: maxGuests, status: 'responded' }).select('id').single();
+  if (error) return toast(error.message, 'error');
+  const { error: updateError } = await db.from('rsvps').update({ invitation_id: data.id, verification_status: 'verified' }).eq('id', id);
+  if (updateError) return toast(updateError.message, 'error');
+  selectedReviewId = null;
+  toast('Invitation created and RSVP verified.');
+  await loadAdmin();
+}
+
 render();
 if (isAdminPortal) loadAdmin();

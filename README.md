@@ -1,45 +1,38 @@
-# Jordan & Rochelle Wedding App — Command Center v1
+# Jordan & Rochelle Wedding Manager — Command Center v2
 
-This build connects the public RSVP form and private Wedding Command Center to the existing Supabase tables.
+This release uses the configured Supabase project and includes:
 
-## Included in this build
-
-- Public RSVP submissions insert into `rsvps` as `needs_review`
-- Private email/password login at `/command-center.html`
 - Live dashboard totals
-- Private wedding countdown
-- RSVP review queue
-- Match an RSVP to an existing invitation
-- Verify without matching
-- Create an invitation from an RSVP
-- Reject an RSVP
-- Searchable invite list
-- Add invitation form
-- Wedding jobs list and add-job form
-- Mobile Command Center navigation
+- Split-screen RSVP review
+- Suggested invitation matches
+- RSVP editing, verification, rejection, and invitation creation
+- Invitation add, edit, and delete
+- Invitation CSV import and export
+- Wedding jobs
+- Toast notifications
 
-## Deploying the update
+## Deploy through GitHub
 
-1. Copy your existing Supabase URL and publishable/anon key into `config.js`.
-2. Test locally:
+Copy the files in this folder into the root of the `Jordan-And-Rochelle-Wedding` repository, replacing the existing files. Commit and push to `main`. Netlify will deploy automatically.
 
-```bash
-python -m http.server 8080
+Suggested commit message:
+
+```text
+Add RSVP review and invitation management v0.2.0
 ```
 
-3. Open the public site at `http://localhost:8080/`.
-4. Open the private site at `http://localhost:8080/command-center.html`.
-5. Upload the **contents of this folder** to the same Netlify site to replace the prior version.
+## CSV import columns
 
-## Security
+The first row must contain these required columns:
 
-The browser uses only the Supabase publishable/anon key. Do not place a service-role key in `config.js`.
+```text
+household_name,primary_first_name,primary_last_name
+```
 
-The public RSVP insert depends on the anonymous `INSERT` policy already added to `rsvps`. Admin reads and changes depend on the `is_admin()` RLS policies and membership in `admin_users`.
+Optional columns:
 
-## Important test
+```text
+street_address,city,state,zip_code,phone,email,max_guests,status,private_notes
+```
 
-1. Submit a test RSVP on the public page.
-2. Sign into the private Command Center.
-3. Open **RSVP Review**.
-4. Match, verify, or reject the test response.
+Valid status values are `invited`, `responded`, `declined`, and `cancelled`.
