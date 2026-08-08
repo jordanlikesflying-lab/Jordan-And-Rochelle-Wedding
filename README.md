@@ -1,38 +1,47 @@
-# Jordan & Rochelle Wedding Manager — Command Center v2
+# Jordan & Rochelle Wedding Manager — Command Center v0.3.0
 
-This release uses the configured Supabase project and includes:
+This release keeps the v0.2.0 RSVP review and invitation tools and adds **Guest Profiles**.
 
-- Live dashboard totals
+## New in v0.3.0
+
+- Searchable Guest Profiles section
+- Profiles for RSVP respondents and invited households that have not responded yet
+- Contact information, address, household, RSVP status, party counts, and additional guests in one view
+- Edit RSVP and invitation directly from the profile
+- Private admin notes stored on the linked invitation
+- Wedding job assignment from a guest profile
+- Remove job assignments
+- Record activity assembled from invitation, RSVP, and assignment timestamps
+- Profile buttons directly from the Invite List
+- Responsive split-screen layout on desktop and stacked layout on phones
+
+## Existing features
+
+- Live Supabase dashboard
 - Split-screen RSVP review
 - Suggested invitation matches
 - RSVP editing, verification, rejection, and invitation creation
-- Invitation add, edit, and delete
-- Invitation CSV import and export
+- Invitation add, edit, delete, CSV import, and CSV export
 - Wedding jobs
 - Toast notifications
 
 ## Deploy through GitHub
 
-Copy the files in this folder into the root of the `Jordan-And-Rochelle-Wedding` repository, replacing the existing files. Commit and push to `main`. Netlify will deploy automatically.
+Copy the **contents of this folder** into the root of the `Jordan-And-Rochelle-Wedding` repository, replacing the existing files. Commit and push to `main`. Netlify should deploy automatically.
 
 Suggested commit message:
 
 ```text
-Add RSVP review and invitation management v0.2.0
+Add guest profiles and job assignments v0.3.0
 ```
 
-## CSV import columns
+## Database
 
-The first row must contain these required columns:
+No new tables are required. Guest Profiles use the existing:
 
-```text
-household_name,primary_first_name,primary_last_name
-```
+- `invitations`
+- `rsvps`
+- `wedding_jobs`
+- `job_assignments`
 
-Optional columns:
-
-```text
-street_address,city,state,zip_code,phone,email,max_guests,status,private_notes
-```
-
-Valid status values are `invited`, `responded`, `declined`, and `cancelled`.
+The configured browser client uses the existing Supabase publishable key. Keep service-role credentials out of this repository.

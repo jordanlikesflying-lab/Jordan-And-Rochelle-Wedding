@@ -851,3 +851,294 @@ async function createInvitationFromRsvp(id) {
 
 render();
 if (isAdminPortal) loadAdmin();
+
+// Command Center v0.3.0 — Guest Profiles
+let selectedGuestId = null;
+let selectedInvitationProfileId = null;
+let guestSearch = '';
+
+function renderAdmin() {
+  if (!configured) {
+    return `<main class="content-page admin-page"><div class="page-heading"><p class="eyebrow">Setup needed</p><h2>Connect Supabase</h2><p>Open <strong>config.js</strong> and add your Supabase project URL and publishable key.</p></div></main>`;
+  }
+  if (!session) {
+    return `<main class="content-page admin-page"><div class="page-heading"><p class="eyebrow">Private area</p><h2>Wedding Command Center</h2><p>Approved administrators only.</p></div>
+      <form class="login-card" onsubmit="adminLogin(event)">${field('Email', 'email', true)}
+        <label class="field"><span>Password</span><input type="password" name="password" required autocomplete="current-password"></label>
+        <div id="login-message"></div><button class="primary" type="submit">Sign In</button>
+      </form></main>`;
+  }
+
+  const views = ['dashboard','review','invitations','guests','jobs','registry','photos','summary','settings'];
+  return `<main class="command-layout">
+    <aside class="command-sidebar">
+      <div class="sidebar-wedding"><span>Wedding date</span><strong>Nov. 14, 2026</strong></div>
+      ${sidebarButton('dashboard', '⌂', 'Dashboard')}
+      ${sidebarButton('review', '✉', 'RSVP Review', needsReview().length)}
+      ${sidebarButton('invitations', '👥', 'Invite List')}
+      ${sidebarButton('guests', '♙', 'Guest Profiles')}
+      ${sidebarButton('jobs', '✓', 'Wedding Jobs')}
+      ${sidebarButton('registry', '🎁', 'Registry')}
+      ${sidebarButton('photos', '▧', 'Photos')}
+      ${sidebarButton('summary', '▤', 'Wedding Summary')}
+      ${sidebarButton('settings', '⚙', 'Settings')}
+      <button class="sidebar-signout" onclick="adminLogout()">Sign out</button>
+    </aside>
+    <section class="command-main">
+      <div class="command-mobile-nav"><label>Command Center<select onchange="setAdminView(this.value)">
+        ${views.map((view) => `<option value="${view}" ${view === adminView ? 'selected' : ''}>${view === 'guests' ? 'Guest Profiles' : titleCase(view)}</option>`).join('')}
+      </select></label></div>
+      ${loadingAdmin ? '<div class="loading-card">Loading wedding information…</div>' : renderAdminView()}
+    </section>
+  </main>`;
+}
+
+function renderAdminView() {
+  if (adminError) return `<div class="error-card"><h2>Could not load the Command Center</h2><p>${esc(adminError)}</p><button class="primary" onclick="loadAdmin()">Try Again</button></div>`;
+  if (adminView === 'dashboard') return renderDashboard();
+  if (adminView === 'review') return renderReview();
+  if (adminView === 'invitations') return renderInvitations();
+  if (adminView === 'guests') return renderGuestProfiles();
+  if (adminView === 'jobs') return renderJobs();
+  if (adminView === 'registry') return placeholderAdminPage('Gift Registry', 'Registry management is the next module after guest management.');
+  if (adminView === 'photos') return placeholderAdminPage('Photo Manager', 'This will manage your private library and the selected guest album.');
+  if (adminView === 'summary') return renderSummary();
+  if (adminView === 'settings') return placeholderAdminPage('Settings', 'Wedding details and public-page visibility controls will be added here.');
+  return renderDashboard();
+}
+
+function guestRecords() {
+  const rsvpRecords = adminData.rsvps.map((rsvp) => {
+    const invitation = adminData.invitations.find((item) => item.id === rsvp.invitation_id) || null;
+    return {
+      type: 'rsvp',
+      key: `rsvp:${rsvp.id}`,
+      id: rsvp.id,
+      invitationId: invitation?.id || null,
+      name: `${rsvp.first_name || ''} ${rsvp.last_name || ''}`.trim(),
+      household: invitation?.household_name || 'Unmatched RSVP',
+      phone: rsvp.phone || invitation?.phone || '',
+      email: rsvp.email || invitation?.email || '',
+      city: rsvp.city || invitation?.city || '',
+      state: rsvp.state || invitation?.state || '',
+      attendance: rsvp.attendance,
+      verification: rsvp.verification_status,
+      rsvp,
+      invitation
+    };
+  });
+
+  const invitationOnly = adminData.invitations
+    .filter((invitation) => !adminData.rsvps.some((rsvp) => rsvp.invitation_id === invitation.id))
+    .map((invitation) => ({
+      type: 'invitation',
+      key: `invitation:${invitation.id}`,
+      id: invitation.id,
+      invitationId: invitation.id,
+      name: `${invitation.primary_first_name || ''} ${invitation.primary_last_name || ''}`.trim(),
+      household: invitation.household_name,
+      phone: invitation.phone || '',
+      email: invitation.email || '',
+      city: invitation.city || '',
+      state: invitation.state || '',
+      attendance: null,
+      verification: null,
+      rsvp: null,
+      invitation
+    }));
+
+  return [...rsvpRecords, ...invitationOnly].sort((a, b) => a.name.localeCompare(b.name));
+}
+
+function setGuestSearch(value) {
+  guestSearch = value;
+  render();
+  const input = document.querySelector('#guest-search');
+  input?.focus();
+  input?.setSelectionRange(value.length, value.length);
+}
+
+function selectGuestRecord(key) {
+  const [type, id] = key.split(':');
+  selectedGuestId = type === 'rsvp' ? id : null;
+  selectedInvitationProfileId = type === 'invitation' ? id : null;
+  render();
+}
+
+function openGuestByRsvp(id) {
+  adminView = 'guests';
+  selectedGuestId = id;
+  selectedInvitationProfileId = null;
+  render();
+}
+
+function openGuestByInvitation(id) {
+  adminView = 'guests';
+  const linked = adminData.rsvps.find((rsvp) => rsvp.invitation_id === id);
+  selectedGuestId = linked?.id || null;
+  selectedInvitationProfileId = linked ? null : id;
+  render();
+}
+
+function renderGuestProfiles() {
+  const all = guestRecords();
+  const query = guestSearch.trim().toLowerCase();
+  const filtered = query ? all.filter((record) => [record.name, record.household, record.phone, record.email, record.city, record.state, record.rsvp?.additional_guests, record.invitation?.private_notes]
+    .some((value) => String(value || '').toLowerCase().includes(query))) : all;
+
+  let selected = null;
+  if (selectedGuestId) selected = filtered.find((record) => record.type === 'rsvp' && record.id === selectedGuestId) || null;
+  if (!selected && selectedInvitationProfileId) selected = filtered.find((record) => record.type === 'invitation' && record.id === selectedInvitationProfileId) || null;
+  if (!selected && filtered.length) {
+    selected = filtered[0];
+    selectedGuestId = selected.type === 'rsvp' ? selected.id : null;
+    selectedInvitationProfileId = selected.type === 'invitation' ? selected.id : null;
+  }
+
+  return `<div class="admin-view"><div class="view-heading"><div><p class="eyebrow">People & households</p><h1>Guest Profiles</h1><p>Contact details, RSVP information, private notes, and wedding jobs in one place.</p></div></div>
+    <div class="guest-toolbar"><input id="guest-search" type="search" value="${esc(guestSearch)}" placeholder="Search name, household, phone, email, city, or notes" oninput="setGuestSearch(this.value)"><span>${filtered.length} profile${filtered.length === 1 ? '' : 's'}</span></div>
+    <div class="guest-split">
+      <aside class="guest-list">${filtered.length ? filtered.map((record) => renderGuestListItem(record, selected?.key === record.key)).join('') : '<p class="muted guest-empty">No matching guests.</p>'}</aside>
+      <section class="guest-profile-detail">${selected ? renderGuestProfile(selected) : '<div class="empty-state admin-empty"><h2>No guest selected</h2></div>'}</section>
+    </div>
+  </div>`;
+}
+
+function renderGuestListItem(record, active) {
+  const sub = record.rsvp ? `${titleCase(record.rsvp.attendance)} · ${record.household}` : `No RSVP yet · ${record.household}`;
+  return `<button class="guest-list-item ${active ? 'active' : ''}" onclick="selectGuestRecord('${record.key}')">
+    <span class="guest-avatar">${esc((record.name || '?').charAt(0).toUpperCase())}</span>
+    <span class="guest-list-copy"><strong>${esc(record.name || record.household)}</strong><small>${esc(sub)}</small></span>
+    ${record.rsvp ? statusPill(record.rsvp.verification_status) : statusPill(record.invitation.status)}
+  </button>`;
+}
+
+function profileAddress(record) {
+  const source = record.rsvp || record.invitation || {};
+  return [source.street_address, [source.city, source.state].filter(Boolean).join(', '), source.zip_code].filter(Boolean).map(esc).join('<br>') || '—';
+}
+
+function renderGuestProfile(record) {
+  const rsvp = record.rsvp;
+  const invitation = record.invitation;
+  const assignments = adminData.assignments.filter((assignment) =>
+    (rsvp && assignment.rsvp_id === rsvp.id) ||
+    (invitation && assignment.invitation_id === invitation.id)
+  );
+  const partyCount = rsvp ? Number(rsvp.adult_count || 0) + Number(rsvp.child_count || 0) : null;
+
+  return `<article class="guest-profile-card">
+    <div class="guest-profile-header"><div><p class="eyebrow">${esc(record.household)}</p><h2>${esc(record.name || record.household)}</h2><div class="profile-pills">${rsvp ? statusPill(rsvp.attendance) + statusPill(rsvp.verification_status) : statusPill(invitation?.status || 'invited')}</div></div>
+      <div class="profile-actions">${rsvp ? `<button class="secondary" onclick="openRsvpDialog('${rsvp.id}')">Edit RSVP</button>` : ''}${invitation ? `<button class="secondary" onclick="openInvitationDialog('${invitation.id}')">Edit Invitation</button>` : ''}</div>
+    </div>
+
+    <div class="profile-info-grid">
+      <div class="profile-info"><span>Phone</span><strong>${esc(record.phone || '—')}</strong></div>
+      <div class="profile-info"><span>Email</span><strong>${esc(record.email || '—')}</strong></div>
+      <div class="profile-info"><span>Address</span><strong>${profileAddress(record)}</strong></div>
+      <div class="profile-info"><span>Household</span><strong>${esc(record.household || '—')}</strong></div>
+      ${rsvp ? `<div class="profile-info"><span>Party</span><strong>${partyCount} total · ${rsvp.adult_count} adult${rsvp.adult_count === 1 ? '' : 's'} · ${rsvp.child_count} child${rsvp.child_count === 1 ? '' : 'ren'}</strong></div>
+      <div class="profile-info"><span>Additional guests</span><strong>${esc(rsvp.additional_guests || 'None listed')}</strong></div>` : `<div class="profile-info"><span>Allowed guests</span><strong>${invitation?.max_guests ?? '—'}</strong></div><div class="profile-info"><span>RSVP</span><strong>Not received yet</strong></div>`}
+    </div>
+
+    ${rsvp?.notes ? `<section class="profile-section"><div class="profile-section-heading"><h3>Guest notes</h3></div><p>${esc(rsvp.notes)}</p></section>` : ''}
+    <section class="profile-section"><div class="profile-section-heading"><h3>Private admin notes</h3>${invitation ? `<button onclick="editPrivateNotes('${invitation.id}')">Edit</button>` : ''}</div><p class="private-note-copy">${esc(invitation?.private_notes || 'No private notes yet.')}</p></section>
+
+    <section class="profile-section"><div class="profile-section-heading"><h3>Wedding jobs</h3><button onclick="openAssignmentDialog('${rsvp?.id || ''}', '${invitation?.id || ''}', '${esc(record.name)}')">Assign job</button></div>
+      ${assignments.length ? `<div class="assignment-list">${assignments.map(renderAssignmentRow).join('')}</div>` : '<p class="muted">No wedding jobs assigned.</p>'}
+    </section>
+
+    <section class="profile-section"><div class="profile-section-heading"><h3>Record activity</h3></div>${renderProfileActivity(record, assignments)}</section>
+  </article>`;
+}
+
+function renderAssignmentRow(assignment) {
+  const job = adminData.jobs.find((item) => item.id === assignment.job_id);
+  return `<div class="assignment-row"><div><strong>${esc(job?.title || 'Wedding job')}</strong><span>${esc(assignment.person_name || '')}${assignment.instructions ? ` · ${esc(assignment.instructions)}` : ''}</span></div><div class="assignment-row-actions">${statusPill(assignment.status || 'assigned')}<button class="danger-text" onclick="removeAssignment('${assignment.id}')">Remove</button></div></div>`;
+}
+
+function renderProfileActivity(record, assignments) {
+  const activity = [];
+  const invitation = record.invitation;
+  const rsvp = record.rsvp;
+  if (invitation?.created_at) activity.push({ date: invitation.created_at, title: 'Invitation added', detail: invitation.household_name });
+  if (rsvp?.created_at) activity.push({ date: rsvp.created_at, title: 'RSVP submitted', detail: titleCase(rsvp.attendance) });
+  if (rsvp?.updated_at && rsvp.updated_at !== rsvp.created_at) activity.push({ date: rsvp.updated_at, title: 'RSVP last updated', detail: titleCase(rsvp.verification_status) });
+  if (rsvp?.verification_status) activity.push({ date: rsvp.updated_at || rsvp.created_at, title: 'Current verification', detail: titleCase(rsvp.verification_status) });
+  assignments.forEach((assignment) => {
+    const job = adminData.jobs.find((item) => item.id === assignment.job_id);
+    activity.push({ date: assignment.created_at, title: 'Job assigned', detail: job?.title || assignment.person_name || 'Wedding job' });
+  });
+  activity.sort((a, b) => new Date(b.date || 0) - new Date(a.date || 0));
+  if (!activity.length) return '<p class="muted">No activity recorded yet.</p>';
+  return `<div class="activity-list">${activity.map((item) => `<div class="activity-row"><span class="activity-dot"></span><div><strong>${esc(item.title)}</strong><p>${esc(item.detail || '')}</p><small>${formatDate(item.date)}</small></div></div>`).join('')}</div>`;
+}
+
+function editPrivateNotes(invitationId) {
+  const invitation = adminData.invitations.find((item) => item.id === invitationId);
+  if (!invitation) return;
+  document.body.insertAdjacentHTML('beforeend', `<div class="modal-backdrop" id="modal"><form class="modal-card" onsubmit="savePrivateNotes(event, '${invitationId}')">
+    <div class="modal-heading"><h2>Private Admin Notes</h2><button type="button" onclick="closeModal()">×</button></div>
+    <label class="field"><span>Only admins can see these notes</span><textarea name="private_notes" rows="7">${esc(invitation.private_notes || '')}</textarea></label>
+    <div class="modal-actions"><button type="button" class="secondary" onclick="closeModal()">Cancel</button><button class="primary" type="submit">Save Notes</button></div>
+  </form></div>`);
+}
+
+async function savePrivateNotes(event, invitationId) {
+  event.preventDefault();
+  const form = new FormData(event.target);
+  const privateNotes = String(form.get('private_notes') || '').trim() || null;
+  const { error } = await db.from('invitations').update({ private_notes: privateNotes }).eq('id', invitationId);
+  if (error) return toast(error.message, 'error');
+  closeModal();
+  toast('Private notes saved.');
+  await loadAdmin();
+}
+
+function openAssignmentDialog(rsvpId = '', invitationId = '', personName = '') {
+  if (!adminData.jobs.length) return toast('Add a wedding job first.', 'error');
+  document.body.insertAdjacentHTML('beforeend', `<div class="modal-backdrop" id="modal"><form class="modal-card" onsubmit="saveAssignment(event, '${rsvpId}', '${invitationId}')">
+    <div class="modal-heading"><h2>Assign Wedding Job</h2><button type="button" onclick="closeModal()">×</button></div>
+    <div class="form-grid">
+      <label class="field wide"><span>Person</span><input name="person_name" required value="${esc(personName)}"></label>
+      <label class="field wide"><span>Wedding job</span><select name="job_id" required><option value="">Choose a job…</option>${adminData.jobs.map((job) => `<option value="${job.id}">${esc(job.title)}</option>`).join('')}</select></label>
+      <label class="field"><span>Status</span><select name="status"><option value="assigned">Assigned</option><option value="confirmed">Confirmed</option><option value="volunteered">Volunteered</option></select></label>
+      <label class="field wide"><span>Instructions</span><textarea name="instructions" rows="4" placeholder="Arrival time, responsibilities, or anything they need to know"></textarea></label>
+    </div>
+    <div class="modal-actions"><button type="button" class="secondary" onclick="closeModal()">Cancel</button><button class="primary" type="submit">Assign Job</button></div>
+  </form></div>`);
+}
+
+async function saveAssignment(event, rsvpId = '', invitationId = '') {
+  event.preventDefault();
+  const form = new FormData(event.target);
+  const payload = {
+    job_id: form.get('job_id'),
+    rsvp_id: rsvpId || null,
+    invitation_id: invitationId || null,
+    person_name: String(form.get('person_name') || '').trim(),
+    status: String(form.get('status') || 'assigned'),
+    instructions: String(form.get('instructions') || '').trim() || null
+  };
+  const { error } = await db.from('job_assignments').insert(payload);
+  if (error) return toast(error.message, 'error');
+  closeModal();
+  toast('Wedding job assigned.');
+  await loadAdmin();
+}
+
+async function removeAssignment(id) {
+  if (!window.confirm('Remove this wedding job assignment?')) return;
+  const { error } = await db.from('job_assignments').delete().eq('id', id);
+  if (error) return toast(error.message, 'error');
+  toast('Job assignment removed.');
+  await loadAdmin();
+}
+
+function invitationTable(items) {
+  if (!items.length) return '<p class="muted">No invitations found.</p>';
+  return `<div class="table-wrap"><table><thead><tr><th>Household</th><th>Primary contact</th><th>Contact</th><th>Allowed</th><th>Status</th><th>Actions</th></tr></thead><tbody>
+    ${items.map((item) => `<tr><td><strong>${esc(item.household_name)}</strong><br><small>${esc([item.city, item.state].filter(Boolean).join(', '))}</small></td><td>${esc(item.primary_first_name)} ${esc(item.primary_last_name)}</td><td>${esc(item.phone || item.email || '—')}</td><td>${item.max_guests}</td><td>${statusPill(item.status)}</td><td><div class="table-actions"><button onclick="openGuestByInvitation('${item.id}')">Profile</button><button onclick="openInvitationDialog('${item.id}')">Edit</button><button class="danger-text" onclick="deleteInvitation('${item.id}')">Delete</button></div></td></tr>`).join('')}
+  </tbody></table></div>`;
+}
+
