@@ -110,7 +110,7 @@ function renderHome() {
   <section class="quick-grid">
     ${card('👥', 'RSVP', 'Tell us whether you can celebrate with us.', 'rsvp')}
     ${card('📅', 'Wedding Details', 'Saturday, November 14, 2026 at 10:00 AM.', 'details')}
-    ${card('🎁', 'Gift Registry', 'Registry information will be added here.', 'registry')}
+    ${card('🎁', 'Gift Registry', 'Browse gifts and registry links chosen by Jordan and Rochelle.', 'registry')}
     ${card('📷', 'Photo Album', 'Photos chosen by Jordan and Rochelle.', 'photos')}
   </section></main>`;
 }
@@ -1392,4 +1392,264 @@ function renderDashboard() {
       </article>
     </section>
   </div>`;
+}
+
+// Command Center v0.5.0 — Registry Manager
+let registrySearch = '';
+let selectedRegistryId = null;
+let publicRegistry = [];
+let publicRegistryLoading = false;
+let publicRegistryError = '';
+
+function safeUrl(value = '') {
+  try {
+    const url = new URL(String(value).trim(), window.location.href);
+    return (url.protocol === 'http:' || url.protocol === 'https:') ? url.href : '';
+  } catch {
+    return '';
+  }
+}
+
+// Public navigation now loads live registry items only when a guest opens the registry.
+function nav(next) {
+  if (next === 'admin' && !isAdminPortal) return;
+  page = next;
+  render();
+  window.scrollTo({ top: 0, behavior: 'smooth' });
+  if (next === 'admin') loadAdmin();
+  if (next === 'registry' && !isAdminPortal) loadPublicRegistry();
+}
+
+async function loadPublicRegistry() {
+  if (!db || publicRegistryLoading) return;
+  publicRegistryLoading = true;
+  publicRegistryError = '';
+  if (page === 'registry') render();
+  const { data, error } = await db.from('registry_items').select('*').eq('is_active', true).order('sort_order', { ascending: true }).order('created_at', { ascending: true });
+  publicRegistryLoading = false;
+  if (error) {
+    publicRegistryError = error.message;
+    publicRegistry = [];
+  } else {
+    publicRegistry = data || [];
+  }
+  if (page === 'registry') render();
+}
+
+function renderRegistry() {
+  let body = '';
+  if (!configured) {
+    body = `<div class="empty-state"><div class="big-icon">🎁</div><h3>Registry coming soon</h3><p>The registry is not connected yet.</p></div>`;
+  } else if (publicRegistryLoading) {
+    body = `<div class="loading-card">Loading our registry…</div>`;
+  } else if (publicRegistryError) {
+    body = `<div class="error-card"><h3>We couldn't load the registry.</h3><p>Please try again in a moment.</p><button class="primary" onclick="loadPublicRegistry()">Try Again</button></div>`;
+  } else if (!publicRegistry.length) {
+    body = `<div class="empty-state"><div class="big-icon">🎁</div><h3>Registry coming soon</h3><p>Jordan and Rochelle will add registry information here.</p></div>`;
+  } else {
+    body = `<div class="public-registry-grid">${publicRegistry.map(renderPublicRegistryItem).join('')}</div>`;
+  }
+  return `<main class="content-page"><div class="page-heading"><p class="eyebrow">With gratitude</p><h2>Gift Registry</h2><p>Your presence at our wedding means so much to us. If you would like to give a gift, our registry items are below.</p></div>${body}</main>`;
+}
+
+function renderPublicRegistryItem(item) {
+  const itemUrl = safeUrl(item.item_url);
+  const imageUrl = safeUrl(item.image_url);
+  return `<article class="public-registry-card">
+    ${imageUrl ? `<div class="registry-image-wrap"><img src="${esc(imageUrl)}" alt="${esc(item.title)}" loading="lazy" onerror="this.parentElement.classList.add('image-failed');this.remove()"></div>` : `<div class="registry-image-wrap registry-image-placeholder">🎁</div>`}
+    <div class="public-registry-copy">
+      ${item.store_name ? `<p class="registry-store">${esc(item.store_name)}</p>` : ''}
+      <h3>${esc(item.title)}</h3>
+      ${item.description ? `<p>${esc(item.description)}</p>` : ''}
+      ${itemUrl ? `<a class="primary registry-link" href="${esc(itemUrl)}" target="_blank" rel="noopener noreferrer">View Gift</a>` : ''}
+    </div>
+  </article>`;
+}
+
+function renderAdminView() {
+  if (adminError) return `<div class="error-card"><h2>Could not load the Command Center</h2><p>${esc(adminError)}</p><button class="primary" onclick="loadAdmin()">Try Again</button></div>`;
+  if (adminView === 'dashboard') return renderDashboard();
+  if (adminView === 'review') return renderReview();
+  if (adminView === 'invitations') return renderInvitations();
+  if (adminView === 'guests') return renderGuestProfiles();
+  if (adminView === 'jobs') return renderJobs();
+  if (adminView === 'registry') return renderRegistryManager();
+  if (adminView === 'photos') return placeholderAdminPage('Photo Manager', 'This will manage your private library and the selected guest album.');
+  if (adminView === 'summary') return renderSummary();
+  if (adminView === 'settings') return placeholderAdminPage('Settings', 'Wedding details and public-page visibility controls will be added here.');
+  return renderDashboard();
+}
+
+function registryItemsSorted() {
+  return [...adminData.registry].sort((a, b) => {
+    const order = Number(a.sort_order || 0) - Number(b.sort_order || 0);
+    if (order) return order;
+    return String(a.created_at || '').localeCompare(String(b.created_at || ''));
+  });
+}
+
+function setRegistrySearch(value) {
+  registrySearch = value;
+  render();
+  const input = document.querySelector('#registry-search');
+  input?.focus();
+  input?.setSelectionRange(value.length, value.length);
+}
+
+function selectRegistryItem(id) {
+  selectedRegistryId = id;
+  render();
+}
+
+function renderRegistryManager() {
+  const all = registryItemsSorted();
+  const query = registrySearch.trim().toLowerCase();
+  const filtered = query ? all.filter((item) => [item.title, item.description, item.store_name, item.item_url]
+    .some((value) => String(value || '').toLowerCase().includes(query))) : all;
+  const activeCount = all.filter((item) => item.is_active).length;
+  const hiddenCount = all.length - activeCount;
+
+  let selected = filtered.find((item) => item.id === selectedRegistryId) || null;
+  if (!selected && filtered.length) {
+    selected = filtered[0];
+    selectedRegistryId = selected.id;
+  }
+
+  return `<div class="admin-view">
+    <div class="view-heading"><div><p class="eyebrow">Gifts & stores</p><h1>Registry Manager</h1><p>Add registry items and control exactly what guests can see.</p></div><button class="primary" onclick="openRegistryDialog()">Add Registry Item</button></div>
+    <section class="registry-metric-grid">
+      ${metricCard('Registry items', all.length, 'Total items')}
+      ${metricCard('Visible', activeCount, 'Shown to guests')}
+      ${metricCard('Hidden', hiddenCount, 'Admin only')}
+    </section>
+    <div class="registry-toolbar"><input id="registry-search" type="search" value="${esc(registrySearch)}" placeholder="Search gifts, stores, or descriptions" oninput="setRegistrySearch(this.value)"><span>${filtered.length} item${filtered.length === 1 ? '' : 's'}</span></div>
+    <div class="registry-split">
+      <aside class="registry-list">${filtered.length ? filtered.map((item) => renderRegistryListItem(item, selected?.id === item.id)).join('') : '<p class="muted registry-empty">No matching registry items.</p>'}</aside>
+      <section class="registry-detail">${selected ? renderRegistryDetail(selected, all) : `<div class="empty-state admin-empty"><div class="big-icon">🎁</div><h2>No registry items yet</h2><p>Add your first registry item when you are ready.</p><button class="primary" onclick="openRegistryDialog()">Add Registry Item</button></div>`}</section>
+    </div>
+    ${all.length ? `<section class="admin-panel registry-preview-panel"><div class="panel-heading"><div><h2>Guest preview</h2><p class="muted">Only visible items appear below, in guest order.</p></div></div><div class="registry-preview-grid">${all.filter((item) => item.is_active).map(renderRegistryPreviewItem).join('') || '<p class="muted">No items are currently visible to guests.</p>'}</div></section>` : ''}
+  </div>`;
+}
+
+function renderRegistryListItem(item, active) {
+  return `<button class="registry-list-item ${active ? 'active' : ''}" onclick="selectRegistryItem('${item.id}')">
+    <span class="registry-list-copy"><strong>${esc(item.title)}</strong><small>${esc(item.store_name || 'No store listed')}</small></span>
+    <span class="registry-visibility ${item.is_active ? 'visible' : 'hidden'}">${item.is_active ? 'Visible' : 'Hidden'}</span>
+  </button>`;
+}
+
+function renderRegistryPreviewItem(item) {
+  const image = safeUrl(item.image_url);
+  return `<article class="registry-preview-card">
+    ${image ? `<img src="${esc(image)}" alt="${esc(item.title)}" loading="lazy">` : '<div class="registry-preview-placeholder">🎁</div>'}
+    <div><strong>${esc(item.title)}</strong><span>${esc(item.store_name || '')}</span></div>
+  </article>`;
+}
+
+function renderRegistryDetail(item, all) {
+  const index = all.findIndex((entry) => entry.id === item.id);
+  const itemUrl = safeUrl(item.item_url);
+  const imageUrl = safeUrl(item.image_url);
+  return `<article class="registry-detail-card">
+    <div class="registry-detail-header">
+      <div><p class="eyebrow">Registry item</p><h2>${esc(item.title)}</h2><div class="profile-pills"><span class="registry-visibility ${item.is_active ? 'visible' : 'hidden'}">${item.is_active ? 'Visible to guests' : 'Hidden from guests'}</span></div></div>
+      <div class="profile-actions"><button class="secondary" onclick="openRegistryDialog('${item.id}')">Edit</button><button class="danger-button" onclick="deleteRegistryItem('${item.id}')">Delete</button></div>
+    </div>
+    <div class="registry-detail-body">
+      <div class="registry-detail-image">${imageUrl ? `<img src="${esc(imageUrl)}" alt="${esc(item.title)}">` : '<div class="registry-large-placeholder">🎁</div>'}</div>
+      <div>
+        <div class="profile-info-grid registry-info-grid">
+          <div class="profile-info"><span>Store</span><strong>${esc(item.store_name || '—')}</strong></div>
+          <div class="profile-info"><span>Guest order</span><strong>${index + 1} of ${all.length}</strong></div>
+          <div class="profile-info"><span>Visibility</span><strong>${item.is_active ? 'Shown on public registry' : 'Hidden from public registry'}</strong></div>
+          <div class="profile-info"><span>Link</span><strong>${itemUrl ? `<a href="${esc(itemUrl)}" target="_blank" rel="noopener noreferrer">Open store page ↗</a>` : '—'}</strong></div>
+        </div>
+        ${item.description ? `<section class="profile-section"><h3>Description</h3><p class="job-description">${esc(item.description)}</p></section>` : ''}
+        <section class="profile-section"><div class="registry-action-grid">
+          <button class="secondary" onclick="toggleRegistryVisibility('${item.id}')">${item.is_active ? 'Hide from Guests' : 'Show to Guests'}</button>
+          <button class="secondary" onclick="moveRegistryItem('${item.id}', -1)" ${index <= 0 ? 'disabled' : ''}>Move Up</button>
+          <button class="secondary" onclick="moveRegistryItem('${item.id}', 1)" ${index >= all.length - 1 ? 'disabled' : ''}>Move Down</button>
+        </div></section>
+      </div>
+    </div>
+  </article>`;
+}
+
+function openRegistryDialog(id = '') {
+  const item = id ? adminData.registry.find((entry) => entry.id === id) : null;
+  const nextOrder = registryItemsSorted().length ? Math.max(...registryItemsSorted().map((entry) => Number(entry.sort_order || 0))) + 10 : 10;
+  document.body.insertAdjacentHTML('beforeend', `<div class="modal-backdrop" id="modal"><form class="modal-card" onsubmit="saveRegistryItem(event)">
+    <input type="hidden" name="registry_id" value="${esc(item?.id || '')}">
+    <div class="modal-heading"><h2>${item ? 'Edit Registry Item' : 'Add Registry Item'}</h2><button type="button" onclick="closeModal()">×</button></div>
+    <div class="form-grid">
+      <label class="field wide"><span>Gift or item name</span><input name="title" required value="${esc(item?.title || '')}"></label>
+      <label class="field"><span>Store name (optional)</span><input name="store_name" value="${esc(item?.store_name || '')}"></label>
+      <label class="field"><span>Sort order</span><input type="number" name="sort_order" min="0" step="1" value="${Number(item?.sort_order ?? nextOrder)}"></label>
+      <label class="field wide"><span>Store/item URL (optional)</span><input type="url" name="item_url" placeholder="https://…" value="${esc(item?.item_url || '')}"></label>
+      <label class="field wide"><span>Image URL (optional)</span><input type="url" name="image_url" placeholder="https://…" value="${esc(item?.image_url || '')}"></label>
+      <label class="field wide"><span>Description (optional)</span><textarea name="description" rows="4">${esc(item?.description || '')}</textarea></label>
+      <label class="field wide checkbox-field"><input type="checkbox" name="is_active" ${item ? (item.is_active ? 'checked' : '') : 'checked'}><span>Show this item on the guest registry</span></label>
+    </div>
+    <div class="modal-actions"><button type="button" class="secondary" onclick="closeModal()">Cancel</button><button class="primary" type="submit">${item ? 'Save Changes' : 'Add Item'}</button></div>
+  </form></div>`);
+}
+
+async function saveRegistryItem(event) {
+  event.preventDefault();
+  const form = new FormData(event.target);
+  const id = String(form.get('registry_id') || '');
+  const itemUrl = String(form.get('item_url') || '').trim();
+  const imageUrl = String(form.get('image_url') || '').trim();
+  if (itemUrl && !safeUrl(itemUrl)) return toast('The store link must start with http:// or https://.', 'error');
+  if (imageUrl && !safeUrl(imageUrl)) return toast('The image link must start with http:// or https://.', 'error');
+  const payload = {
+    title: String(form.get('title') || '').trim(),
+    description: String(form.get('description') || '').trim() || null,
+    store_name: String(form.get('store_name') || '').trim() || null,
+    item_url: itemUrl || null,
+    image_url: imageUrl || null,
+    is_active: form.get('is_active') === 'on',
+    sort_order: Math.max(0, Number(form.get('sort_order') || 0))
+  };
+  const result = id ? await db.from('registry_items').update(payload).eq('id', id) : await db.from('registry_items').insert(payload).select('id').single();
+  if (result.error) return toast(result.error.message, 'error');
+  if (!id && result.data?.id) selectedRegistryId = result.data.id;
+  closeModal();
+  toast(id ? 'Registry item updated.' : 'Registry item added.');
+  await loadAdmin();
+}
+
+async function toggleRegistryVisibility(id) {
+  const item = adminData.registry.find((entry) => entry.id === id);
+  if (!item) return;
+  const { error } = await db.from('registry_items').update({ is_active: !item.is_active }).eq('id', id);
+  if (error) return toast(error.message, 'error');
+  toast(item.is_active ? 'Registry item hidden from guests.' : 'Registry item is now visible to guests.');
+  await loadAdmin();
+}
+
+async function moveRegistryItem(id, direction) {
+  const ordered = registryItemsSorted();
+  const index = ordered.findIndex((entry) => entry.id === id);
+  const target = index + Number(direction);
+  if (index < 0 || target < 0 || target >= ordered.length) return;
+  const [moved] = ordered.splice(index, 1);
+  ordered.splice(target, 0, moved);
+  const updates = await Promise.all(ordered.map((entry, position) => db.from('registry_items').update({ sort_order: (position + 1) * 10 }).eq('id', entry.id)));
+  const error = updates.find((result) => result.error)?.error;
+  if (error) return toast(error.message, 'error');
+  selectedRegistryId = id;
+  toast('Registry order updated.');
+  await loadAdmin();
+}
+
+async function deleteRegistryItem(id) {
+  const item = adminData.registry.find((entry) => entry.id === id);
+  if (!item) return;
+  if (!window.confirm(`Delete “${item.title}” from the registry? This cannot be undone.`)) return;
+  const { error } = await db.from('registry_items').delete().eq('id', id);
+  if (error) return toast(error.message, 'error');
+  selectedRegistryId = null;
+  toast('Registry item deleted.');
+  await loadAdmin();
 }

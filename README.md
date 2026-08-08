@@ -46,7 +46,7 @@ No new tables are required. Guest Profiles use the existing:
 
 The configured browser client uses the existing Supabase publishable key. Keep service-role credentials out of this repository.
 
-## v0.4.0 — Wedding Jobs
+## v0.5.0 — Wedding Jobs
 
 This release adds a complete Wedding Jobs workspace to the private Command Center:
 
@@ -62,3 +62,11 @@ This release adds a complete Wedding Jobs workspace to the private Command Cente
 - Dashboard attention count now reflects genuinely unfilled job positions
 
 No new Supabase tables are required. This release uses the existing `wedding_jobs` and `job_assignments` tables.
+
+
+## v0.5.0 — Registry Manager
+
+- Add, edit, hide/show, reorder, and delete registry items.
+- Preview the public registry from the Command Center.
+- The public Gift Registry page now loads only active items from Supabase.
+- No database schema changes are required if your existing `registry_items` table matches the project schema.
