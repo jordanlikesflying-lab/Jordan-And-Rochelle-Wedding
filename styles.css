@@ -54,3 +54,13 @@
 @media(max-width:700px){.people-name-grid{grid-template-columns:1fr}.map-card iframe{height:320px}}
 
 .named-attendee-list{display:grid;gap:.55rem}.named-attendee-list>div{display:flex;justify-content:space-between;gap:1rem;padding:.7rem .85rem;border:1px solid var(--border);border-radius:12px}.named-attendee-list span{color:var(--muted);font-size:.9rem}
+
+/* v0.6.3 */
+.photo-skeleton,.photo-load-failed{min-height:220px;display:flex;flex-direction:column;align-items:center;justify-content:center;gap:.7rem;background:linear-gradient(110deg,#f2ece8 8%,#faf7f5 18%,#f2ece8 33%);border-radius:16px;color:var(--muted)}
+.photo-load-failed{background:#faf6f3;border:1px dashed var(--border)}
+.mini-button{padding:.45rem .7rem;font-size:.84rem}
+.assignment-row-v063{align-items:flex-start}.assignment-row-v063 small{display:block;color:var(--muted);margin-top:.25rem}
+.assignment-row-v063 .assignment-row-actions{flex-wrap:wrap;justify-content:flex-end}
+.household-person-list{display:grid;gap:.8rem}.household-person-row{padding:1rem;border:1px solid var(--border);border-radius:14px}.household-person-row>div:first-child{display:flex;gap:.6rem;align-items:baseline;margin-bottom:.6rem}.household-person-row>div:first-child span{color:var(--muted);font-size:.9rem}
+.job-response-page{min-height:100vh;display:grid;place-items:center;padding:24px;background:#f7f3ef}.job-response-card{width:min(620px,100%);background:white;border:1px solid #eadfd7;border-radius:24px;padding:32px;box-shadow:var(--shadow)}
+.job-response-actions{display:flex;gap:.8rem;flex-wrap:wrap;margin-top:1.5rem}.response-home-link{display:inline-flex;text-decoration:none;margin-top:1rem}

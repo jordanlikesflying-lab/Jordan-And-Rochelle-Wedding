@@ -1,0 +1,64 @@
+<!doctype html>
+<html lang="en">
+<head>
+  <meta charset="UTF-8">
+  <meta name="viewport" content="width=device-width,initial-scale=1">
+  <meta name="robots" content="noindex,nofollow,noarchive">
+  <meta name="description" content="Wedding job response for Jordan and Rochelle">
+  <title>Wedding Job Request · Jordan & Rochelle</title>
+  <link rel="stylesheet" href="styles.css">
+  <script src="config.js"></script>
+</head>
+<body>
+  <div class="job-response-page">
+    <main class="job-response-card">
+      <p class="eyebrow">Jordan & Rochelle · November 14, 2026</p>
+      <h1>Wedding Job Request</h1>
+      <div id="job-response-content">
+        <p>Choose how you'd like to respond to the wedding job request.</p>
+        <div class="job-response-actions">
+          <button class="primary" onclick="respondToJob('accepted')">Accept Job</button>
+          <button class="secondary" onclick="respondToJob('declined')">Decline</button>
+        </div>
+      </div>
+    </main>
+  </div>
+  <script>
+    const cfg = window.WEDDING_CONFIG || {};
+    const params = new URLSearchParams(location.search);
+    const token = params.get('token') || '';
+    const content = document.getElementById('job-response-content');
+
+    if (!token) {
+      content.innerHTML = '<div class="error-card"><h2>Invalid request</h2><p>This job-response link is missing its secure token.</p></div>';
+    }
+
+    async function respondToJob(action) {
+      if (!token || !cfg.supabaseUrl || !cfg.supabaseAnonKey) return;
+      const label = action === 'accepted' ? 'accept' : 'decline';
+      if (!confirm(`Are you sure you want to ${label} this wedding job?`)) return;
+      content.innerHTML = '<div class="loading-card">Saving your response…</div>';
+      try {
+        const response = await fetch(`${cfg.supabaseUrl}/functions/v1/job-response`, {
+          method: 'POST',
+          headers: {
+            'Content-Type': 'application/json',
+            'apikey': cfg.supabaseAnonKey
+          },
+          body: JSON.stringify({ token, action })
+        });
+        const result = await response.json().catch(() => ({}));
+        if (!response.ok) throw new Error(result.error || 'Could not save your response.');
+        const verb = action === 'accepted' ? 'accepted' : 'declined';
+        content.innerHTML = `<div class="success-card"><div class="big-icon">♥</div><h2>Thank you!</h2><p>You have ${verb} <strong>${escapeHtml(result.job_title || 'the wedding job')}</strong>.</p><p>Jordan and Rochelle will see your response in their Wedding Command Center.</p><a class="secondary response-home-link" href="/">Return to Wedding Website</a></div>`;
+      } catch (error) {
+        content.innerHTML = `<div class="error-card"><h2>We couldn't save that response.</h2><p>${escapeHtml(error.message)}</p><button class="primary" onclick="location.reload()">Try Again</button></div>`;
+      }
+    }
+
+    function escapeHtml(value='') {
+      return String(value).replace(/[&<>'"]/g, c => ({'&':'&amp;','<':'&lt;','>':'&gt;',"'":'&#39;','"':'&quot;'}[c]));
+    }
+  </script>
+</body>
+</html>

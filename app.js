@@ -2274,3 +2274,597 @@ saveInvitation = async function(event, id='') {
   if(result.error){toast(result.error.message,'error');submit.disabled=false;return;}
   closeModal(); toast(id?'Invitation updated.':'Invitation added.'); await loadAdmin();
 };
+
+
+/* ===== v0.6.3 email, individual jobs, Excel and gallery reliability patch ===== */
+
+async function ensureXlsxV063() {
+  if (window.XLSX) return window.XLSX;
+  const sources = [
+    'https://cdn.sheetjs.com/xlsx-0.20.3/package/dist/xlsx.full.min.js',
+    'https://cdn.jsdelivr.net/npm/xlsx@0.18.5/dist/xlsx.full.min.js'
+  ];
+  for (const src of sources) {
+    try {
+      await new Promise((resolve, reject) => {
+        const script = document.createElement('script');
+        script.src = src;
+        script.onload = resolve;
+        script.onerror = reject;
+        document.head.appendChild(script);
+      });
+      if (window.XLSX) return window.XLSX;
+    } catch {}
+  }
+  throw new Error('The Excel reader could not load. Check your internet connection and try again, or import a CSV file.');
+}
+
+importInvitationsExcelV062 = async function(event) {
+  const file = event.target.files?.[0]; event.target.value = '';
+  if (!file) return;
+  try {
+    const XLSX = await ensureXlsxV063();
+    const wb = XLSX.read(await file.arrayBuffer(), { type: 'array' });
+    const rows = XLSX.utils.sheet_to_json(wb.Sheets[wb.SheetNames[0]], { defval: '' });
+    if (!rows.length) return toast('The spreadsheet has no invitation rows.', 'error');
+    const norm = rows.map(r => {
+      const get = (...keys) => {
+        for (const k of keys) {
+          const found = Object.keys(r).find(x => x.toLowerCase().replace(/[^a-z0-9]/g, '') === k);
+          if (found) return r[found];
+        }
+        return '';
+      };
+      const first = String(get('primaryfirstname','firstname','first') || '').trim();
+      const last = String(get('primarylastname','lastname','last') || '').trim();
+      return {
+        household_name: `${first} ${last}`.trim(),
+        primary_first_name: first,
+        primary_last_name: last,
+        street_address: String(get('streetaddress','address') || '').trim() || null,
+        city: String(get('city') || '').trim() || null,
+        state: String(get('state') || '').trim() || null,
+        zip_code: String(get('zipcode','zip') || '').trim() || null,
+        phone: String(get('phone','phonenumber') || '').trim() || null,
+        email: String(get('email') || '').trim() || null,
+        max_guests: Number(get('maxguests','guests') || 1) || 1,
+        status: 'invited'
+      };
+    }).filter(r => r.primary_first_name && r.primary_last_name);
+    if (!norm.length) return toast('Could not find first and last name columns.', 'error');
+    if (!confirm(`Import ${norm.length} invitations? Household names will match the main guest name.`)) return;
+    const { error } = await db.from('invitations').insert(norm);
+    if (error) return toast(error.message, 'error');
+    toast(`${norm.length} invitations imported.`);
+    await loadAdmin();
+  } catch (e) {
+    toast(`Could not import spreadsheet: ${e.message}`, 'error');
+  }
+};
+
+importGiftListV062 = async function(event) {
+  const file = event.target.files?.[0]; event.target.value = '';
+  if (!file) return;
+  try {
+    const XLSX = await ensureXlsxV063();
+    const wb = XLSX.read(await file.arrayBuffer(), { type: 'array' });
+    const rows = XLSX.utils.sheet_to_json(wb.Sheets[wb.SheetNames[0]], { defval: '' });
+    const start = registryItemsSorted().length * 10 + 10;
+    const items = rows.map((r, i) => {
+      const keys = Object.fromEntries(Object.entries(r).map(([k,v]) => [k.toLowerCase().replace(/[^a-z0-9]/g,''), v]));
+      return {
+        title: String(keys.title || keys.gift || keys.item || '').trim(),
+        description: String(keys.description || '').trim() || null,
+        store_name: String(keys.store || keys.storename || '').trim() || null,
+        item_url: String(keys.url || keys.link || keys.itemurl || '').trim() || null,
+        image_url: String(keys.image || keys.imageurl || '').trim() || null,
+        is_active: true,
+        sort_order: start + i * 10
+      };
+    }).filter(x => x.title);
+    if (!items.length) return toast('Your gift list needs a Title, Gift, or Item column.', 'error');
+    if (!confirm(`Import ${items.length} gift items?`)) return;
+    const { error } = await db.from('registry_items').insert(items);
+    if (error) return toast(error.message, 'error');
+    toast(`${items.length} gifts imported.`);
+    await loadAdmin();
+  } catch (e) {
+    toast(`Could not import gift list: ${e.message}`, 'error');
+  }
+};
+
+async function sendRsvpConfirmationV063(rsvpId) {
+  if (!cfg.supabaseUrl || !cfg.supabaseAnonKey || !rsvpId) return;
+  try {
+    await fetch(`${cfg.supabaseUrl}/functions/v1/send-rsvp-confirmation`, {
+      method: 'POST',
+      headers: { 'Content-Type': 'application/json', 'apikey': cfg.supabaseAnonKey },
+      body: JSON.stringify({ rsvp_id: rsvpId })
+    });
+  } catch (error) {
+    console.warn('RSVP was saved, but confirmation email could not be requested.', error);
+  }
+}
+
+submitRsvpV062 = async function(event) {
+  event.preventDefault();
+  const button = event.target.querySelector('button[type=submit]');
+  const message = document.getElementById('rsvp-message');
+  if (!configured) return message.innerHTML = '<p class="error">The RSVP system has not been connected yet.</p>';
+  button.disabled = true; button.textContent = 'Submitting…';
+  const form = new FormData(event.target);
+  const attendance = form.get('attendance');
+  const adultCount = attendance === 'attending' ? Number(form.get('adult_count') || 0) : 0;
+  const childCount = attendance === 'attending' ? Number(form.get('child_count') || 0) : 0;
+  const people = [];
+  if (attendance === 'attending') {
+    for (let i=0;i<adultCount;i++) people.push({ person_name: String(form.get(`adult_name_${i}`)||'').trim(), person_type:'adult', sort_order:i });
+    for (let i=0;i<childCount;i++) people.push({ person_name: String(form.get(`child_name_${i}`)||'').trim(), person_type:'child', sort_order:adultCount+i });
+    if (people.some(p => !p.person_name)) {
+      button.disabled=false; button.textContent='Submit RSVP';
+      return message.innerHTML='<p class="error">Please enter a name for everyone attending.</p>';
+    }
+  }
+  const email = String(form.get('email') || '').trim() || null;
+  const payload = {
+    invitation_id:null, first_name:String(form.get('first_name')).trim(), last_name:String(form.get('last_name')).trim(),
+    street_address:String(form.get('street_address')).trim(), city:String(form.get('city')).trim(), state:String(form.get('state')).trim(),
+    zip_code:String(form.get('zip_code')).trim(), phone:String(form.get('phone')).trim(), email,
+    attendance, adult_count:adultCount, child_count:childCount,
+    additional_guests: people.slice(1).map(p=>p.person_name).join(', ') || null,
+    notes:String(form.get('notes')||'').trim()||null, verification_status:'needs_review', submitted_by_admin:false
+  };
+  const { data, error } = await db.from('rsvps').insert(payload).select('id').single();
+  if (error) {
+    button.disabled=false; button.textContent='Submit RSVP';
+    return message.innerHTML=`<p class="error">${esc(error.message)}</p>`;
+  }
+  if (people.length) {
+    const { error: peopleError } = await db.from('rsvp_people').insert(people.map(p=>({...p,rsvp_id:data.id})));
+    if (peopleError) {
+      button.disabled=false; button.textContent='Submit RSVP';
+      return message.innerHTML=`<p class="error">RSVP saved, but the guest names could not be saved: ${esc(peopleError.message)}</p>`;
+    }
+  }
+  if (email) sendRsvpConfirmationV063(data.id);
+  event.target.outerHTML = `<div class="success-card"><div class="big-icon">♥</div><h2>Thank you!</h2><p>Your RSVP and guest names have been received.</p>${email ? '<p class="muted">We’ll also send an acknowledgement to the email address you provided.</p>' : ''}${mainMenuButton()}</div>`;
+};
+
+// Gallery: show the album immediately, then hydrate signed URLs in the background.
+function renderPublicPhoto(photo) {
+  const url = publicPhotoUrls.get(photo.storage_path);
+  if (url === null) {
+    return `<figure class="public-photo-card"><div class="photo-load-failed"><span>Photo unavailable</span><button class="secondary mini-button" onclick="retryPublicPhotoV063('${esc(photo.storage_path)}')">Retry</button></div>${photo.caption ? `<figcaption>${esc(photo.caption)}</figcaption>` : ''}</figure>`;
+  }
+  if (!url) {
+    return `<figure class="public-photo-card"><div class="photo-skeleton"><span>Loading photo…</span></div>${photo.caption ? `<figcaption>${esc(photo.caption)}</figcaption>` : ''}</figure>`;
+  }
+  return `<figure class="public-photo-card"><img src="${esc(url)}" alt="${esc(photo.caption || 'Jordan and Rochelle wedding photo')}" loading="lazy" onerror="publicPhotoImageErrorV063('${esc(photo.storage_path)}')">${photo.caption ? `<figcaption>${esc(photo.caption)}</figcaption>` : ''}</figure>`;
+}
+
+loadPublicPhotos = async function(force = false) {
+  if (!db || (publicPhotosLoading && !force)) return;
+  publicPhotosLoading = true;
+  publicPhotosError = '';
+  if (page === 'photos') render();
+  const { data, error } = await db.from('photos').select('*').eq('show_in_guest_album', true)
+    .order('sort_order', { ascending: true }).order('created_at', { ascending: true });
+  publicPhotosLoading = false;
+  if (error) {
+    publicPhotos = [];
+    publicPhotosError = error.message;
+    if (page === 'photos') render();
+    return;
+  }
+  publicPhotos = data || [];
+  publicPhotoUrls = new Map(publicPhotos.map(photo => [photo.storage_path, undefined]));
+  if (page === 'photos') render();
+
+  const paths = publicPhotos.map(photo => photo.storage_path).filter(Boolean);
+  if (!paths.length) return;
+  try {
+    const { data: signed, error: signError } = await db.storage.from(PHOTO_BUCKET).createSignedUrls(paths, 3600);
+    if (signError) throw signError;
+    (signed || []).forEach((item, index) => {
+      const path = item.path || paths[index];
+      publicPhotoUrls.set(path, item.signedUrl || null);
+    });
+  } catch (error) {
+    console.warn('Batch photo signing failed; retrying individually.', error);
+    await Promise.all(paths.map(async path => {
+      try {
+        const { data: signed, error } = await db.storage.from(PHOTO_BUCKET).createSignedUrl(path, 3600);
+        publicPhotoUrls.set(path, error ? null : (signed?.signedUrl || null));
+      } catch {
+        publicPhotoUrls.set(path, null);
+      }
+    }));
+  }
+  if (page === 'photos') render();
+};
+
+async function retryPublicPhotoV063(path) {
+  publicPhotoUrls.set(path, undefined);
+  render();
+  try {
+    const { data, error } = await db.storage.from(PHOTO_BUCKET).createSignedUrl(path, 3600);
+    publicPhotoUrls.set(path, error ? null : (data?.signedUrl || null));
+  } catch {
+    publicPhotoUrls.set(path, null);
+  }
+  render();
+}
+
+function publicPhotoImageErrorV063(path) {
+  publicPhotoUrls.set(path, null);
+  render();
+}
+
+renderPhotos = function() {
+  let body = '';
+  if (!configured) {
+    body = '<div class="empty-state"><div class="big-icon">📷</div><h3>Photo album coming soon</h3></div>';
+  } else if (publicPhotosLoading && !publicPhotos.length) {
+    body = '<div class="loading-card">Loading album…</div>';
+  } else if (publicPhotosError) {
+    body = `<div class="error-card"><h3>We couldn't load the album.</h3><p>${esc(publicPhotosError)}</p><button class="primary" onclick="loadPublicPhotos(true)">Try Again</button></div>`;
+  } else if (!publicPhotos.length) {
+    body = '<div class="empty-state"><div class="big-icon">📷</div><h3>Photos coming soon</h3></div>';
+  } else {
+    body = `<div class="public-photo-grid">${publicPhotos.map(renderPublicPhoto).join('')}</div>`;
+  }
+  return `<main class="content-page">${mainMenuButton()}<div class="page-heading"><p class="eyebrow">Our memories</p><h2>Photo Album</h2><p>Photos selected by Jordan and Rochelle.</p></div>${body}</main>`;
+};
+
+loadPublicFavoritePhoto = async function() {
+  if (!db || publicFavoriteLoading) return;
+  publicFavoriteLoading = true;
+  if (page === 'home') render();
+  try {
+    const { data, error } = await db.from('photos').select('*').eq('is_favorite_engagement', true).limit(1).maybeSingle();
+    if (error || !data) {
+      publicFavoritePhoto = null;
+      publicFavoritePhotoUrl = '';
+    } else {
+      publicFavoritePhoto = data;
+      const { data: signed, error: signError } = await db.storage.from(PHOTO_BUCKET).createSignedUrl(data.storage_path, 3600);
+      publicFavoritePhotoUrl = signError ? '' : (signed?.signedUrl || '');
+    }
+  } catch {
+    publicFavoritePhotoUrl = '';
+  }
+  publicFavoriteLoading = false;
+  if (page === 'home') render();
+};
+
+// Individual people from each RSVP are assignable to wedding jobs.
+function assignmentPeopleV063() {
+  const rows = [];
+  const rsvps = adminData.rsvps || [];
+  const people = adminData.rsvpPeople || [];
+  const invitations = adminData.invitations || [];
+
+  rsvps.forEach(rsvp => {
+    const invitation = rsvp.invitation_id ? invitations.find(i => i.id === rsvp.invitation_id) : null;
+    const household = invitation?.household_name || `${rsvp.first_name} ${rsvp.last_name}`.trim();
+    const members = people.filter(p => p.rsvp_id === rsvp.id);
+    if (members.length) {
+      members.forEach(member => rows.push({
+        key: `person:${member.id}`,
+        person_id: member.id,
+        rsvp_id: rsvp.id,
+        invitation_id: rsvp.invitation_id || null,
+        person_name: member.person_name,
+        household,
+        email: rsvp.email || invitation?.email || ''
+      }));
+    } else {
+      rows.push({
+        key: `rsvp:${rsvp.id}`,
+        person_id: null,
+        rsvp_id: rsvp.id,
+        invitation_id: rsvp.invitation_id || null,
+        person_name: `${rsvp.first_name} ${rsvp.last_name}`.trim(),
+        household,
+        email: rsvp.email || invitation?.email || ''
+      });
+    }
+  });
+
+  invitations.forEach(invitation => {
+    const already = rsvps.some(r => r.invitation_id === invitation.id);
+    if (!already) rows.push({
+      key: `invite:${invitation.id}`,
+      person_id: null,
+      rsvp_id: null,
+      invitation_id: invitation.id,
+      person_name: `${invitation.primary_first_name} ${invitation.primary_last_name}`.trim() || invitation.household_name,
+      household: invitation.household_name,
+      email: invitation.email || ''
+    });
+  });
+  return rows.sort((a,b) => a.person_name.localeCompare(b.person_name));
+}
+
+assignmentGuestOptions = function() {
+  return assignmentPeopleV063().map(record =>
+    `<option value="${esc(record.key)}">${esc(record.person_name)} — ${esc(record.household)}</option>`
+  ).join('');
+};
+
+function selectedAssignmentPersonV063(key) {
+  return assignmentPeopleV063().find(item => item.key === key) || null;
+}
+
+function fillAssignmentEmailV063(key) {
+  const person = selectedAssignmentPersonV063(key);
+  const emailInput = document.querySelector('#assignment-email-v063');
+  if (emailInput && person) emailInput.value = person.email || '';
+}
+
+openJobAssignmentDialog = function(jobId) {
+  const job = adminData.jobs.find(item => item.id === jobId);
+  if (!job) return;
+  const options = assignmentGuestOptions();
+  if (!options) return toast('Add an invitation or RSVP before assigning a job.', 'error');
+
+  document.body.insertAdjacentHTML('beforeend', `<div class="modal-backdrop" id="modal"><form class="modal-card" onsubmit="saveJobAssignment(event)">
+    <input type="hidden" name="job_id" value="${esc(job.id)}">
+    <div class="modal-heading"><h2>Assign ${esc(job.title)}</h2><button type="button" onclick="closeModal()">×</button></div>
+    <div class="form-grid">
+      <label class="field wide"><span>Person</span><select name="guest_record" required onchange="fillAssignmentEmailV063(this.value)"><option value="">Choose a person…</option>${options}</select></label>
+      <label class="field wide"><span>Email for this job request</span><input id="assignment-email-v063" type="email" name="contact_email" placeholder="Can use the household email or a different email"></label>
+      <label class="field wide"><span>How should this start?</span>
+        <select name="status">
+          <option value="awaiting_response">Send email request and wait for response</option>
+          <option value="accepted">They already said yes (phone, text, or in person)</option>
+          <option value="assigned">Assign without sending an email yet</option>
+        </select>
+      </label>
+      <label class="field wide"><span>Instructions for this person (optional)</span><textarea name="instructions" rows="4"></textarea></label>
+    </div>
+    <p class="muted">If this person does not have their own email, you can use the main household email.</p>
+    <div class="modal-actions"><button type="button" class="secondary" onclick="closeModal()">Cancel</button><button class="primary" type="submit">Save Assignment</button></div>
+  </form></div>`);
+};
+
+saveJobAssignment = async function(event) {
+  event.preventDefault();
+  const form = new FormData(event.target);
+  const record = selectedAssignmentPersonV063(String(form.get('guest_record') || ''));
+  if (!record) return toast('Choose a person first.', 'error');
+
+  const jobId = String(form.get('job_id'));
+  const desiredStatus = String(form.get('status') || 'assigned');
+  const email = String(form.get('contact_email') || '').trim() || null;
+  if (desiredStatus === 'awaiting_response' && !email) return toast('Enter an email address to send a job request.', 'error');
+
+  const duplicate = adminData.assignments.some(item =>
+    item.job_id === jobId &&
+    ((record.person_id && item.rsvp_person_id === record.person_id) ||
+     (!record.person_id && item.person_name === record.person_name && item.rsvp_id === record.rsvp_id))
+  );
+  if (duplicate) return toast('That person is already assigned to this job.', 'error');
+
+  const now = new Date().toISOString();
+  const payload = {
+    job_id: jobId,
+    rsvp_id: record.rsvp_id || null,
+    invitation_id: record.invitation_id || null,
+    rsvp_person_id: record.person_id || null,
+    person_name: record.person_name,
+    contact_email: email,
+    status: desiredStatus,
+    instructions: String(form.get('instructions') || '').trim() || null,
+    responded_at: desiredStatus === 'accepted' ? now : null,
+    response_method: desiredStatus === 'accepted' ? 'admin' : null
+  };
+  const { data, error } = await db.from('job_assignments').insert(payload).select('id').single();
+  if (error) return toast(error.message, 'error');
+
+  if (desiredStatus === 'awaiting_response') {
+    const { error: emailError } = await db.functions.invoke('send-job-request', { body: { assignment_id: data.id } });
+    if (emailError) {
+      await db.from('job_assignments').update({ status: 'assigned' }).eq('id', data.id);
+      closeModal();
+      toast(`Assignment saved, but the email could not be sent: ${emailError.message}`, 'error');
+      await loadAdmin();
+      return;
+    }
+  }
+
+  closeModal();
+  toast(desiredStatus === 'accepted' ? `${record.person_name} marked accepted.` : `${record.person_name} assigned.`);
+  await loadAdmin();
+};
+
+async function markAssignmentResponseV063(id, status) {
+  const label = status === 'accepted' ? 'accepted' : 'declined';
+  if (!confirm(`Mark this person as ${label}?`)) return;
+  const { error } = await db.from('job_assignments').update({
+    status,
+    responded_at: new Date().toISOString(),
+    response_method: 'admin'
+  }).eq('id', id);
+  if (error) return toast(error.message, 'error');
+  toast(`Job marked ${label}.`);
+  await loadAdmin();
+}
+
+async function resendJobRequestV063(id) {
+  const assignment = adminData.assignments.find(a => a.id === id);
+  if (!assignment?.contact_email) return toast('Add an email address to this assignment first.', 'error');
+  toast('Sending job request…');
+  const { error } = await db.functions.invoke('send-job-request', { body: { assignment_id: id } });
+  if (error) return toast(error.message, 'error');
+  toast('Job request email sent.');
+  await loadAdmin();
+}
+
+function assignmentStatusActionsV063(assignment) {
+  const status = String(assignment.status || 'assigned');
+  let buttons = '';
+  if (status !== 'accepted') buttons += `<button onclick="markAssignmentResponseV063('${assignment.id}','accepted')">Mark Accepted</button>`;
+  if (status !== 'declined') buttons += `<button onclick="markAssignmentResponseV063('${assignment.id}','declined')">Mark Declined</button>`;
+  if (assignment.contact_email) buttons += `<button onclick="resendJobRequestV063('${assignment.id}')">${status === 'awaiting_response' ? 'Resend Email' : 'Send Email Request'}</button>`;
+  return buttons;
+}
+
+renderJobAssignmentRow = function(assignment) {
+  const linkedRsvp = assignment.rsvp_id ? adminData.rsvps.find(item => item.id === assignment.rsvp_id) : null;
+  const linkedInvitation = assignment.invitation_id ? adminData.invitations.find(item => item.id === assignment.invitation_id) : null;
+  const openAction = linkedRsvp ? `selectGuestRecord('rsvp-${linkedRsvp.id}');setAdminView('guests')` : (linkedInvitation ? `selectGuestRecord('invitation-${linkedInvitation.id}');setAdminView('guests')` : '');
+  const responseText = assignment.responded_at
+    ? ` · ${assignment.response_method === 'admin' ? 'confirmed by admin' : 'responded by email'} ${formatDate(assignment.responded_at)}`
+    : (assignment.requested_at ? ` · request sent ${formatDate(assignment.requested_at)}` : '');
+  return `<div class="assignment-row assignment-row-v063">
+    <div><strong>${esc(assignment.person_name || 'Assigned helper')}</strong><span>${esc(assignment.instructions || 'No special instructions')}${responseText}</span>${assignment.contact_email ? `<small>${esc(assignment.contact_email)}</small>` : ''}</div>
+    <div class="assignment-row-actions">${statusPill(assignment.status || 'assigned')}${assignmentStatusActionsV063(assignment)}${openAction ? `<button onclick="${openAction}">Open profile</button>` : ''}<button class="danger-text" onclick="removeAssignment('${assignment.id}')">Remove</button></div>
+  </div>`;
+};
+
+renderAssignmentRow = function(assignment) {
+  const job = adminData.jobs.find(item => item.id === assignment.job_id);
+  const responseText = assignment.responded_at
+    ? ` · ${assignment.response_method === 'admin' ? 'confirmed by admin' : 'responded by email'}`
+    : '';
+  return `<div class="assignment-row assignment-row-v063"><div><strong>${esc(job?.title || 'Wedding job')}</strong><span>${esc(assignment.person_name || '')}${assignment.instructions ? ` · ${esc(assignment.instructions)}` : ''}${responseText}</span></div><div class="assignment-row-actions">${statusPill(assignment.status || 'assigned')}${assignmentStatusActionsV063(assignment)}<button class="danger-text" onclick="removeAssignment('${assignment.id}')">Remove</button></div></div>`;
+};
+
+// Make guest-profile job sections match the specific household person when possible.
+const baseRenderGuestProfileV063 = renderGuestProfile;
+renderGuestProfile = function(record) {
+  let html = baseRenderGuestProfileV063(record);
+  if (!record.rsvp) return html;
+  const members = (adminData.rsvpPeople || []).filter(p => p.rsvp_id === record.rsvp.id);
+  if (!members.length) return html;
+  const jobAssignments = adminData.assignments.filter(a => a.rsvp_id === record.rsvp.id);
+  const personBlock = `<section class="profile-section"><div class="profile-section-heading"><h3>Household People & Jobs</h3></div>
+    <div class="household-person-list">${members.map(member => {
+      const jobs = jobAssignments.filter(a => a.rsvp_person_id === member.id);
+      return `<div class="household-person-row"><div><strong>${esc(member.person_name)}</strong><span>${titleCase(member.person_type)}</span></div><div>${jobs.length ? jobs.map(renderAssignmentRow).join('') : '<span class="muted">No job assigned</span>'}</div></div>`;
+    }).join('')}</div>
+  </section>`;
+  return html.replace('<section class="profile-section"><div class="profile-section-heading"><h3>Record activity</h3>', personBlock + '<section class="profile-section"><div class="profile-section-heading"><h3>Record activity</h3>');
+};
+
+// Ensure the latest named people and settings are loaded before assignment dialogs are used.
+const baseLoadAdminV063 = loadAdmin;
+loadAdmin = async function() {
+  await baseLoadAdminV063();
+  if (!db || !session) return;
+  // v0.6.2 already loads these; this is an idempotent fallback for older cached code.
+  if (!Array.isArray(adminData.rsvpPeople)) {
+    const { data } = await db.from('rsvp_people').select('*').order('sort_order');
+    adminData.rsvpPeople = data || [];
+  }
+  render();
+};
+
+
+/* v0.6.3 follow-up fixes: household assignment from guest profile + declined jobs don't fill openings */
+
+jobStats = function(job) {
+  const assignments = jobAssignments(job.id);
+  const inactive = new Set(['cancelled', 'declined', 'rejected']);
+  const filled = assignments.filter(item => !inactive.has(String(item.status || 'assigned').toLowerCase())).length;
+  const needed = Math.max(0, Number(job.openings || 0));
+  return { assignments, filled, needed, remaining: Math.max(0, needed - filled) };
+};
+
+openAssignmentDialog = function(rsvpId = '', invitationId = '', personName = '') {
+  if (!adminData.jobs.length) return toast('Add a wedding job first.', 'error');
+
+  const allPeople = assignmentPeopleV063();
+  let people = allPeople.filter(p =>
+    (rsvpId && p.rsvp_id === rsvpId) ||
+    (!rsvpId && invitationId && p.invitation_id === invitationId)
+  );
+  if (!people.length && personName) {
+    people = [{
+      key: `fallback:${rsvpId || invitationId || personName}`,
+      person_id: null,
+      rsvp_id: rsvpId || null,
+      invitation_id: invitationId || null,
+      person_name: personName,
+      household: personName,
+      email: ''
+    }];
+  }
+
+  window._profileAssignmentPeopleV063 = people;
+  const options = people.map(p => `<option value="${esc(p.key)}">${esc(p.person_name)}</option>`).join('');
+
+  document.body.insertAdjacentHTML('beforeend', `<div class="modal-backdrop" id="modal"><form class="modal-card" onsubmit="saveProfileAssignmentV063(event)">
+    <div class="modal-heading"><h2>Assign Wedding Job</h2><button type="button" onclick="closeModal()">×</button></div>
+    <div class="form-grid">
+      <label class="field wide"><span>Person in this household</span><select name="guest_record" required onchange="fillProfileAssignmentEmailV063(this.value)"><option value="">Choose a person…</option>${options}</select></label>
+      <label class="field wide"><span>Wedding job</span><select name="job_id" required><option value="">Choose a job…</option>${adminData.jobs.map(job => `<option value="${job.id}">${esc(job.title)}</option>`).join('')}</select></label>
+      <label class="field wide"><span>Email for job request</span><input id="profile-assignment-email-v063" type="email" name="contact_email" placeholder="Household email or this person's email"></label>
+      <label class="field wide"><span>How should this start?</span><select name="status">
+        <option value="awaiting_response">Send email request and wait for response</option>
+        <option value="accepted">They already said yes</option>
+        <option value="assigned">Assign without sending email yet</option>
+      </select></label>
+      <label class="field wide"><span>Instructions</span><textarea name="instructions" rows="4"></textarea></label>
+    </div>
+    <div class="modal-actions"><button type="button" class="secondary" onclick="closeModal()">Cancel</button><button class="primary" type="submit">Save Assignment</button></div>
+  </form></div>`);
+};
+
+function fillProfileAssignmentEmailV063(key) {
+  const person = (window._profileAssignmentPeopleV063 || []).find(p => p.key === key);
+  const input = document.getElementById('profile-assignment-email-v063');
+  if (input && person) input.value = person.email || '';
+}
+
+async function saveProfileAssignmentV063(event) {
+  event.preventDefault();
+  const form = new FormData(event.target);
+  const person = (window._profileAssignmentPeopleV063 || []).find(p => p.key === String(form.get('guest_record') || ''));
+  if (!person) return toast('Choose a person first.', 'error');
+
+  const jobId = String(form.get('job_id') || '');
+  const status = String(form.get('status') || 'assigned');
+  const email = String(form.get('contact_email') || '').trim() || null;
+  if (status === 'awaiting_response' && !email) return toast('Enter an email address to send a job request.', 'error');
+
+  const duplicate = adminData.assignments.some(item =>
+    item.job_id === jobId &&
+    ((person.person_id && item.rsvp_person_id === person.person_id) ||
+     (!person.person_id && item.rsvp_id === person.rsvp_id && item.person_name === person.person_name))
+  );
+  if (duplicate) return toast('That person is already assigned to this job.', 'error');
+
+  const now = new Date().toISOString();
+  const payload = {
+    job_id: jobId,
+    rsvp_id: person.rsvp_id || null,
+    invitation_id: person.invitation_id || null,
+    rsvp_person_id: person.person_id || null,
+    person_name: person.person_name,
+    contact_email: email,
+    status,
+    instructions: String(form.get('instructions') || '').trim() || null,
+    responded_at: status === 'accepted' ? now : null,
+    response_method: status === 'accepted' ? 'admin' : null
+  };
+
+  const { data, error } = await db.from('job_assignments').insert(payload).select('id').single();
+  if (error) return toast(error.message, 'error');
+
+  if (status === 'awaiting_response') {
+    const { error: emailError } = await db.functions.invoke('send-job-request', { body: { assignment_id: data.id } });
+    if (emailError) {
+      await db.from('job_assignments').update({ status: 'assigned' }).eq('id', data.id);
+      closeModal();
+      toast(`Assignment saved, but email could not be sent: ${emailError.message}`, 'error');
+      await loadAdmin();
+      return;
+    }
+  }
+
+  closeModal();
+  toast(status === 'accepted' ? `${person.person_name} marked accepted.` : `${person.person_name} assigned.`);
+  await loadAdmin();
+}

@@ -1,0 +1,8 @@
+[functions.send-rsvp-confirmation]
+verify_jwt = false
+
+[functions.job-response]
+verify_jwt = false
+
+[functions.send-job-request]
+verify_jwt = true

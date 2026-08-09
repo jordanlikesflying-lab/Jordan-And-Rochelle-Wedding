@@ -92,3 +92,18 @@ Photo Manager supports multi-photo upload, captions, guest-album visibility, ord
 Run `v0.6.2-planning-polish.sql` once in Supabase before deploying.
 Adds named RSVP attendees (including children), Excel/CSV invitation import, gift-list import,
 public Main Menu buttons, registry links, and editable wedding details/map settings.
+
+
+## v0.6.3
+
+Run `v0.6.3-email-jobs-gallery.sql` once.
+
+New in this patch:
+- fixes Excel/XLSX importing in the Command Center
+- RSVP acknowledgement email support
+- individual household people can receive wedding jobs
+- emailed job requests with secure Accept/Decline links
+- admin-side Mark Accepted / Mark Declined
+- resend job request emails
+- more reliable public gallery and homepage favorite photo loading
+- `EMAIL-AND-FUNCTIONS-SETUP.md` contains the one-time email setup
