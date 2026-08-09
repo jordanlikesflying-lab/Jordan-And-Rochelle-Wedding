@@ -63,3 +63,14 @@ In Command Center > Wedding Jobs:
 5. Refresh Command Center and verify the assignment says Accepted.
 
 You can also click **Mark Accepted** or **Mark Declined** in Command Center when someone answers by phone, text, or in person.
+
+
+## v0.7.0 administrator settings
+
+Settings includes secure administrator invitations and password-reset emails. Deploy one additional authenticated Edge Function:
+
+```bash
+supabase functions deploy manage-admin-users
+```
+
+If using the Supabase Dashboard editor, create a function named `manage-admin-users` and paste the contents of `supabase/functions/manage-admin-users/index.ts`. Leave JWT verification ON for this function.

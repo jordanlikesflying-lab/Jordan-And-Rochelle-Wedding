@@ -2868,3 +2868,364 @@ async function saveProfileAssignmentV063(event) {
   toast(status === 'accepted' ? `${person.person_name} marked accepted.` : `${person.person_name} assigned.`);
   await loadAdmin();
 }
+
+
+/* ===== v0.7.0 Settings ===== */
+let adminUserDetailsV070 = [];
+let adminUsersLoadingV070 = false;
+let passwordRecoveryV070 = false;
+
+function settingsV070() {
+  return (isAdminPortal ? (adminData.settings || publicWeddingSettings || {}) : (publicWeddingSettings || {}));
+}
+
+function settingV070(key, fallback = '') {
+  const value = settingsV070()?.[key];
+  return value === null || value === undefined || value === '' ? fallback : value;
+}
+
+function booleanSettingV070(key, fallback = true) {
+  const value = settingsV070()?.[key];
+  return value === null || value === undefined ? fallback : Boolean(value);
+}
+
+function coupleNamesV070() {
+  return {
+    first: settingV070('partner_one_name', 'Jordan'),
+    second: settingV070('partner_two_name', 'Rochelle')
+  };
+}
+
+function coupleDisplayV070() {
+  const names = coupleNamesV070();
+  return `${names.first} & ${names.second}`;
+}
+
+function weddingDateValueV070() {
+  return String(settingV070('wedding_date', '2026-11-14')).slice(0, 10);
+}
+
+function weddingTimeValueV070() {
+  return String(settingV070('ceremony_time', '10:00:00')).slice(0, 5);
+}
+
+function weddingDateObjectV070() {
+  const date = weddingDateValueV070();
+  const time = weddingTimeValueV070() || '10:00';
+  const parsed = new Date(`${date}T${time}:00`);
+  return Number.isFinite(parsed.getTime()) ? parsed : new Date('2026-11-14T10:00:00');
+}
+
+function weddingDateLongV070() {
+  const stored = settingsV070()?.wedding_date_label;
+  if (stored) return stored;
+  return new Intl.DateTimeFormat('en-US', { weekday:'long', month:'long', day:'numeric', year:'numeric' }).format(weddingDateObjectV070());
+}
+
+function weddingDateShortV070() {
+  return new Intl.DateTimeFormat('en-US', { month:'short', day:'numeric', year:'numeric' }).format(weddingDateObjectV070());
+}
+
+function ceremonyTimeTextV070() {
+  const stored = settingsV070()?.ceremony_time_label;
+  if (stored) return stored;
+  return `The ceremony begins at ${new Intl.DateTimeFormat('en-US', { hour:'numeric', minute:'2-digit' }).format(weddingDateObjectV070())}.`;
+}
+
+function venueLocationV070() {
+  const city = settingV070('venue_city', 'Milbank');
+  const state = settingV070('venue_state', 'South Dakota');
+  return [city, state].filter(Boolean).join(', ');
+}
+
+function venueAddressLineV070() {
+  const address = settingV070('venue_address', '');
+  const location = venueLocationV070();
+  if (!address) return location;
+  if (address.toLowerCase() === location.toLowerCase()) return location;
+  return `${address}${location ? ` · ${location}` : ''}`;
+}
+
+function footerTextV070() {
+  return `${coupleDisplayV070()} · ${new Intl.DateTimeFormat('en-US', { month:'long', day:'numeric', year:'numeric' }).format(weddingDateObjectV070())}`;
+}
+
+shell = function(content) {
+  const names = coupleNamesV070();
+  if (isAdminPortal) {
+    return `<div class="app-shell admin-app">
+      <header class="site-header admin-header"><div class="brand">${esc(names.first)} <span>&</span> ${esc(names.second)}</div><span class="private-label">Private Command Center</span></header>
+      ${content}<footer><span>♥</span> ${esc(coupleDisplayV070())} · Private administration</footer></div>`;
+  }
+  const registryVisible = booleanSettingV070('registry_visible', true);
+  const photosVisible = booleanSettingV070('guest_album_visible', true);
+  return `<div class="app-shell"><header class="site-header">
+    <button class="brand" onclick="nav('home')">${esc(names.first)} <span>&</span> ${esc(names.second)}</button>
+    <nav class="desktop-nav"><button onclick="nav('rsvp')">RSVP</button><button onclick="nav('details')">Wedding Details</button>${registryVisible ? `<button onclick="nav('registry')">Gift Registry</button>` : ''}${photosVisible ? `<button onclick="nav('photos')">Photo Album</button>` : ''}</nav>
+    </header>${content}<footer><span>♥</span> ${esc(footerTextV070())}</footer></div>`;
+};
+
+render = function() {
+  if (page === 'splash') {
+    const names = coupleNamesV070();
+    app.innerHTML = `<main class="splash"><div class="splash-overlay"></div><section class="splash-card">
+      <p class="eyebrow">Together with our families</p><h1>${esc(names.first)} <span>&</span> ${esc(names.second)}</h1>
+      <p class="date">${esc(new Intl.DateTimeFormat('en-US', { month:'long', day:'numeric', year:'numeric' }).format(weddingDateObjectV070()))}</p>
+      <p class="location">📍 ${esc(settingV070('venue_name','4-H Building'))} · ${esc(venueLocationV070())}</p>
+      <button class="primary large" onclick="nav('home')">Enter Our Wedding Website</button></section></main>`;
+    return;
+  }
+  let content = '';
+  if (page === 'home') content = renderHome();
+  if (page === 'rsvp') content = renderRsvp();
+  if (page === 'details') content = renderDetails();
+  if (page === 'registry') content = renderRegistry();
+  if (page === 'photos') content = renderPhotos();
+  if (page === 'admin' && isAdminPortal) content = renderAdmin();
+  app.innerHTML = shell(content);
+};
+
+renderHome = function() {
+  const rsvpOpen = booleanSettingV070('rsvp_open', true);
+  const registryVisible = booleanSettingV070('registry_visible', true);
+  const photosVisible = booleanSettingV070('guest_album_visible', true);
+  const heading = settingV070('welcome_heading', 'Celebrate with us');
+  const welcome = settingV070('welcome_message', 'We are excited to celebrate our wedding with our family and friends. Please RSVP and find the details for our special day below.');
+  const cards = [
+    card('👥', 'RSVP', rsvpOpen ? 'Tell us whether you can celebrate with us.' : 'RSVPs are currently closed.', 'rsvp'),
+    card('📅', 'Wedding Details', `${weddingDateLongV070()} · ${ceremonyTimeTextV070().replace('The ceremony begins at ','').replace('.','')}`, 'details')
+  ];
+  if (registryVisible) cards.push(card('🎁', 'Gift Registry', 'Browse our registry links and gift ideas.', 'registry'));
+  if (photosVisible) cards.push(card('📷', 'Photo Album', `Photos chosen by ${esc(coupleDisplayV070())}.`, 'photos'));
+  return `<main><section class="hero"><div><p class="eyebrow">We’re getting married</p><h2>${esc(heading)}</h2>
+    <p class="lead">${esc(welcome).replace(/\n/g,'<br>')}</p><button class="primary" onclick="nav('rsvp')">${rsvpOpen ? 'RSVP Now' : 'RSVP Information'}</button>
+    </div>${publicFavoritePhotoUrl ? `<div class="hero-photo hero-engagement-photo"><img src="${esc(publicFavoritePhotoUrl)}" alt="${esc(publicFavoritePhoto?.caption || `${coupleDisplayV070()} engagement photo`)}" onerror="this.closest('.hero-photo').classList.add('photo-error')"></div>` : `<div class="hero-photo placeholder-photo">${publicFavoriteLoading ? 'Loading our favorite engagement photo…' : 'Our favorite engagement photo'}</div>`}</section>
+    <section class="quick-grid">${cards.join('')}</section></main>`;
+};
+
+const renderRsvpV070Form = renderRsvp;
+renderRsvp = function() {
+  if (!booleanSettingV070('rsvp_open', true)) {
+    return `<main class="content-page">${mainMenuButton()}<div class="page-heading"><p class="eyebrow">RSVP</p><h2>RSVPs are currently closed</h2><p>${esc(settingV070('rsvp_closed_message', 'Please contact Jordan or Rochelle if you need to make or change an RSVP.'))}</p></div></main>`;
+  }
+  return renderRsvpV070Form();
+};
+
+renderDetails = function() {
+  const s = settingsV070();
+  const details = settingV070('details_text', 'Additional wedding-day details will be posted here.');
+  const parking = settingV070('parking_text', '');
+  const query = encodeURIComponent(settingV070('map_query', `${settingV070('venue_name','4-H Building')} ${venueLocationV070()}`));
+  return `<main class="content-page">${mainMenuButton()}<div class="page-heading"><p class="eyebrow">Save the date</p><h2>Wedding Details</h2></div>
+    <section class="detail-card"><div class="big-icon">📅</div><div><h3>${esc(weddingDateLongV070())}</h3><p>${esc(ceremonyTimeTextV070())}</p></div></section>
+    <section class="detail-card"><div class="big-icon">📍</div><div><h3>${esc(settingV070('venue_name','4-H Building'))}</h3><p>${esc(venueAddressLineV070())}</p></div></section>
+    <section class="admin-panel public-details-copy"><h3>Wedding Day Information</h3><p>${esc(details).replace(/\n/g,'<br>')}</p>${parking ? `<h3>Parking & Directions</h3><p>${esc(parking).replace(/\n/g,'<br>')}</p>` : ''}</section>
+    <section class="map-card"><iframe title="Wedding venue map" loading="lazy" referrerpolicy="no-referrer-when-downgrade" src="https://www.google.com/maps?q=${query}&output=embed"></iframe></section></main>`;
+};
+
+const renderRegistryV070Visible = renderRegistry;
+renderRegistry = function() {
+  if (!booleanSettingV070('registry_visible', true)) {
+    return `<main class="content-page">${mainMenuButton()}<div class="empty-state"><div class="big-icon">🎁</div><h2>Gift Registry</h2><p>The registry is not currently being shown on our wedding website.</p></div></main>`;
+  }
+  return renderRegistryV070Visible();
+};
+
+const renderPhotosV070Visible = renderPhotos;
+renderPhotos = function() {
+  if (!booleanSettingV070('guest_album_visible', true)) {
+    return `<main class="content-page">${mainMenuButton()}<div class="empty-state"><div class="big-icon">📷</div><h2>Photo Album</h2><p>The photo album is not currently being shown on our wedding website.</p></div></main>`;
+  }
+  return renderPhotosV070Visible();
+};
+
+renderDashboard = function() {
+  const metrics = dashboardMetrics();
+  const milliseconds = Math.max(0, weddingDateObjectV070().getTime() - Date.now());
+  const days = Math.ceil(milliseconds / 86400000);
+  const recent = adminData.rsvps.slice(0, 6);
+  const jobTotals = weddingJobTotals();
+  return `<div class="admin-view"><div class="view-heading"><div><p class="eyebrow">Welcome back</p><h1>Wedding Command Center</h1><p>Signed in as ${esc(session.user.email)}</p></div><button class="secondary" onclick="loadAdmin()">Refresh</button></div>
+    <div class="private-countdown"><span>Private countdown</span><strong>${days}</strong><em>days until “I do”</em></div>
+    <section class="metric-grid">${metricCard('Invited people', metrics.invitedPeople, 'Based on invitation limits')}${metricCard('RSVPs received', metrics.responses, 'Submitted responses')}${metricCard('Attending', metrics.attendingPeople, 'Adults and children')}${metricCard('Declined', metrics.declinedResponses, 'Responses declined')}${metricCard('Needs review', metrics.review, metrics.review ? 'Action required' : 'All caught up', metrics.review > 0)}</section>
+    <section class="attention-grid"><article class="admin-panel"><div class="panel-heading"><h2>Needs attention</h2></div><button class="attention-item" onclick="setAdminView('review')"><span>${metrics.review} RSVP${metrics.review === 1 ? '' : 's'} need review</span><b>Review →</b></button><button class="attention-item" onclick="setAdminView('jobs')"><span>${jobTotals.remaining} wedding-job position${jobTotals.remaining === 1 ? '' : 's'} still need help</span><b>View →</b></button></article>
+      <article class="admin-panel"><div class="panel-heading"><h2>Recent RSVPs</h2><button onclick="setAdminView('review')">View all</button></div>${recent.length ? recent.map((item) => `<div class="recent-row"><div><strong>${esc(item.first_name)} ${esc(item.last_name)}</strong><span>${titleCase(item.attendance)} · ${formatDate(item.created_at)}</span></div>${statusPill(item.verification_status)}</div>`).join('') : '<p class="muted">No RSVP responses yet.</p>'}</article></section></div>`;
+};
+
+renderAdmin = function() {
+  if (!configured) return `<main class="content-page admin-page"><div class="page-heading"><p class="eyebrow">Setup needed</p><h2>Connect Supabase</h2><p>Open <strong>config.js</strong> and add your Supabase project URL and publishable key.</p></div></main>`;
+  if (passwordRecoveryV070 && session) {
+    return `<main class="content-page admin-page"><div class="page-heading"><p class="eyebrow">Admin account</p><h2>Choose a new password</h2><p>Enter the new password you want to use for the Wedding Command Center.</p></div>
+      <form class="login-card" onsubmit="saveRecoveredPasswordV070(event)"><label class="field"><span>New password</span><input type="password" name="password" minlength="8" required autocomplete="new-password"></label><label class="field"><span>Confirm new password</span><input type="password" name="confirm_password" minlength="8" required autocomplete="new-password"></label><div id="login-message"></div><button class="primary" type="submit">Save New Password</button></form></main>`;
+  }
+  if (!session) {
+    return `<main class="content-page admin-page"><div class="page-heading"><p class="eyebrow">Private area</p><h2>Wedding Command Center</h2><p>Approved administrators only.</p></div>
+      <form class="login-card" onsubmit="adminLogin(event)">${field('Email','email',true)}<label class="field"><span>Password</span><input type="password" name="password" required autocomplete="current-password"></label><div id="login-message"></div><button class="primary" type="submit">Sign In</button><button class="login-link-button" type="button" onclick="forgotAdminPasswordV070()">Forgot password?</button></form></main>`;
+  }
+  const views = ['dashboard','review','invitations','guests','jobs','registry','photos','summary','settings'];
+  return `<main class="command-layout"><aside class="command-sidebar"><div class="sidebar-wedding"><span>Wedding date</span><strong>${esc(weddingDateShortV070())}</strong></div>
+    ${sidebarButton('dashboard','⌂','Dashboard')}${sidebarButton('review','✉','RSVP Review',needsReview().length)}${sidebarButton('invitations','👥','Invite List')}${sidebarButton('guests','♙','Guest Profiles')}${sidebarButton('jobs','✓','Wedding Jobs')}${sidebarButton('registry','🎁','Registry')}${sidebarButton('photos','▧','Photos')}${sidebarButton('summary','▤','Wedding Summary')}${sidebarButton('settings','⚙','Settings')}<button class="sidebar-signout" onclick="adminLogout()">Sign out</button></aside>
+    <section class="command-main"><div class="command-mobile-nav"><label>Command Center<select onchange="setAdminView(this.value)">${views.map(view => `<option value="${view}" ${view === adminView ? 'selected' : ''}>${view === 'guests' ? 'Guest Profiles' : titleCase(view)}</option>`).join('')}</select></label></div>${loadingAdmin ? '<div class="loading-card">Loading wedding information…</div>' : renderAdminView()}</section></main>`;
+};
+
+const baseRenderAdminViewV070 = renderAdminView;
+renderAdminView = function() {
+  if (adminView === 'settings') return renderSettingsV070();
+  return baseRenderAdminViewV070();
+};
+
+function renderSettingsV070() {
+  const s = adminData.settings || {};
+  const adminRows = (adminData.adminUsers || []).map(row => {
+    const details = adminUserDetailsV070.find(x => x.user_id === row.user_id) || {};
+    const isMe = row.user_id === session?.user?.id;
+    return `<div class="admin-user-row"><div><strong>${esc(row.display_name || details.email || 'Administrator')}</strong><span>${esc(details.email || (isMe ? session.user.email : 'Email available after admin service is deployed'))}</span>${isMe ? '<small>You</small>' : ''}</div><div class="admin-user-actions">${details.email ? `<button onclick="sendAdminResetV070('${esc(row.user_id)}')">Send Password Reset</button>` : ''}${!isMe ? `<button class="danger-text" onclick="removeAdminV070('${esc(row.user_id)}')">Remove</button>` : ''}</div></div>`;
+  }).join('');
+  return `<div class="admin-view"><div class="view-heading"><div><p class="eyebrow">Website controls</p><h1>Settings</h1><p>Change the information and sections guests see without editing the website files.</p></div><button class="secondary" onclick="previewGuestSiteV070()">Open Guest Site</button></div>
+    <form onsubmit="saveSettingsV070(event)" class="settings-stack">
+      <section class="admin-panel settings-section"><div class="panel-heading"><div><h2>Wedding & Welcome</h2><p class="muted">These values update the public site and private countdown.</p></div></div><div class="form-grid">
+        <label class="field"><span>First name</span><input name="partner_one_name" required value="${esc(s.partner_one_name || 'Jordan')}"></label><label class="field"><span>Second name</span><input name="partner_two_name" required value="${esc(s.partner_two_name || 'Rochelle')}"></label>
+        <label class="field"><span>Wedding date</span><input type="date" name="wedding_date" required value="${esc(String(s.wedding_date || '2026-11-14').slice(0,10))}"></label><label class="field"><span>Ceremony time</span><input type="time" name="ceremony_time" required value="${esc(String(s.ceremony_time || '10:00:00').slice(0,5))}"></label>
+        <label class="field"><span>Venue name</span><input name="venue_name" value="${esc(s.venue_name || '4-H Building')}"></label><label class="field"><span>Venue street address / description</span><input name="venue_address" value="${esc(s.venue_address || '')}"></label>
+        <label class="field"><span>City</span><input name="venue_city" value="${esc(s.venue_city || 'Milbank')}"></label><label class="field"><span>State</span><input name="venue_state" value="${esc(s.venue_state || 'South Dakota')}"></label>
+        <label class="field wide"><span>Homepage heading</span><input name="welcome_heading" value="${esc(s.welcome_heading || 'Celebrate with us')}"></label><label class="field wide"><span>Homepage welcome message</span><textarea name="welcome_message" rows="4">${esc(s.welcome_message || 'We are excited to celebrate our wedding with our family and friends. Please RSVP and find the details for our special day below.')}</textarea></label>
+      </div></section>
+      <section class="admin-panel settings-section"><div class="panel-heading"><div><h2>Wedding Details Page</h2><p class="muted">Directions and information shown to guests.</p></div></div><div class="form-grid">
+        <label class="field wide"><span>Map search</span><input name="map_query" value="${esc(s.map_query || '4-H Building Milbank South Dakota')}"><small>Usually the venue name plus city and state works best.</small></label>
+        <label class="field wide"><span>Wedding day information</span><textarea name="details_text" rows="6">${esc(s.details_text || '')}</textarea></label><label class="field wide"><span>Parking & directions</span><textarea name="parking_text" rows="4">${esc(s.parking_text || '')}</textarea></label>
+      </div></section>
+      <section class="admin-panel settings-section"><div class="panel-heading"><div><h2>Guest Site Controls</h2><p class="muted">Turn guest-facing sections on or off.</p></div></div><div class="settings-toggle-grid">
+        ${toggleSettingV070('rsvp_open','RSVPs open','Guests can submit new RSVPs.', s.rsvp_open !== false)}${toggleSettingV070('registry_visible','Gift Registry visible','Show Gift Registry in the guest menu and homepage.', s.registry_visible !== false)}${toggleSettingV070('guest_album_visible','Photo Album visible','Show the selected guest photo album.', s.guest_album_visible !== false)}
+      </div><label class="field wide settings-closed-message"><span>Message shown when RSVPs are closed</span><input name="rsvp_closed_message" value="${esc(s.rsvp_closed_message || 'Please contact Jordan or Rochelle if you need to make or change an RSVP.')}"></label></section>
+      <section class="admin-panel settings-section"><div class="panel-heading"><div><h2>Registry Links</h2><p class="muted">External registries plus your own imported gift list.</p></div></div><div class="form-grid"><label class="field wide"><span>Amazon Wedding Registry URL</span><input type="url" name="amazon_registry_url" value="${esc(s.amazon_registry_url || '')}" placeholder="Paste your Amazon registry link"></label><label class="field wide"><span>Other registry URL</span><input type="url" name="other_registry_url" value="${esc(s.other_registry_url || '')}" placeholder="Optional second registry"></label></div></section>
+      <div class="settings-save-bar"><button class="primary" type="submit">Save Settings</button><span>Changes appear on the guest site after saving.</span></div>
+    </form>
+    <section class="admin-panel settings-section admin-users-section"><div class="panel-heading"><div><h2>Command Center Administrators</h2><p class="muted">Administrators sign in separately and never appear on the public website.</p></div><button class="primary" onclick="openAddAdminV070()">Add Administrator</button></div>
+      ${adminUsersLoadingV070 ? '<div class="loading-card">Loading administrator emails…</div>' : `<div class="admin-users-list">${adminRows || '<p class="muted">No administrators found.</p>'}</div>`}
+      <p class="settings-security-note">Passwords are handled by Supabase Auth. They are never stored in the wedding website files.</p></section>
+  </div>`;
+}
+
+function toggleSettingV070(name, title, description, checked) {
+  return `<label class="settings-toggle"><input type="checkbox" name="${name}" ${checked ? 'checked' : ''}><span class="toggle-switch"></span><span><strong>${esc(title)}</strong><small>${esc(description)}</small></span></label>`;
+}
+
+async function saveSettingsV070(event) {
+  event.preventDefault();
+  const button = event.submitter || event.target.querySelector('[type=submit]');
+  if (button) { button.disabled = true; button.textContent = 'Saving…'; }
+  const f = new FormData(event.target);
+  const dateValue = String(f.get('wedding_date') || '2026-11-14');
+  const timeValue = String(f.get('ceremony_time') || '10:00');
+  const displayDate = new Date(`${dateValue}T12:00:00`);
+  const displayTime = new Date(`${dateValue}T${timeValue}:00`);
+  const row = {
+    id:1,
+    partner_one_name:String(f.get('partner_one_name') || '').trim(), partner_two_name:String(f.get('partner_two_name') || '').trim(),
+    wedding_date:dateValue, ceremony_time:timeValue,
+    wedding_date_label:new Intl.DateTimeFormat('en-US',{weekday:'long',month:'long',day:'numeric',year:'numeric'}).format(displayDate),
+    ceremony_time_label:`The ceremony begins at ${new Intl.DateTimeFormat('en-US',{hour:'numeric',minute:'2-digit'}).format(displayTime)}.`,
+    venue_name:String(f.get('venue_name') || '').trim() || null, venue_address:String(f.get('venue_address') || '').trim() || null,
+    venue_city:String(f.get('venue_city') || '').trim() || null, venue_state:String(f.get('venue_state') || '').trim() || null,
+    welcome_heading:String(f.get('welcome_heading') || '').trim() || null, welcome_message:String(f.get('welcome_message') || '').trim() || null,
+    map_query:String(f.get('map_query') || '').trim() || null, details_text:String(f.get('details_text') || '').trim() || null, parking_text:String(f.get('parking_text') || '').trim() || null,
+    rsvp_open:f.get('rsvp_open') === 'on', registry_visible:f.get('registry_visible') === 'on', guest_album_visible:f.get('guest_album_visible') === 'on',
+    rsvp_closed_message:String(f.get('rsvp_closed_message') || '').trim() || null,
+    amazon_registry_url:String(f.get('amazon_registry_url') || '').trim() || null, other_registry_url:String(f.get('other_registry_url') || '').trim() || null,
+    updated_at:new Date().toISOString()
+  };
+  const { error } = await db.from('wedding_settings').upsert(row);
+  if (button) { button.disabled = false; button.textContent = 'Save Settings'; }
+  if (error) return toast(error.message, 'error');
+  adminData.settings = row; publicWeddingSettings = row; toast('Settings saved.'); render();
+}
+
+function previewGuestSiteV070() { window.open('/', '_blank', 'noopener'); }
+
+const baseSetAdminViewV070 = setAdminView;
+setAdminView = function(next) {
+  adminView = next; render();
+  if (next === 'settings') refreshAdminUsersV070();
+};
+
+const baseLoadAdminV070 = loadAdmin;
+loadAdmin = async function() {
+  await baseLoadAdminV070();
+  if (!db || !session) return;
+  const [settingsResult, adminsResult] = await Promise.all([
+    db.from('wedding_settings').select('*').eq('id',1).maybeSingle(),
+    db.from('admin_users').select('*').order('created_at',{ascending:true})
+  ]);
+  if (!settingsResult.error) { adminData.settings = settingsResult.data || {}; publicWeddingSettings = settingsResult.data || {}; }
+  if (!adminsResult.error) adminData.adminUsers = adminsResult.data || [];
+  render();
+  if (adminView === 'settings') refreshAdminUsersV070();
+};
+
+async function refreshAdminUsersV070() {
+  if (!session || adminUsersLoadingV070) return;
+  adminUsersLoadingV070 = true; render();
+  try {
+    const { data, error } = await db.functions.invoke('manage-admin-users', { body:{ action:'list' } });
+    if (error) throw error;
+    adminUserDetailsV070 = data?.admins || [];
+  } catch (error) {
+    console.warn('Administrator email service is not deployed yet.', error);
+    adminUserDetailsV070 = [];
+  }
+  adminUsersLoadingV070 = false; render();
+}
+
+function openAddAdminV070() {
+  document.body.insertAdjacentHTML('beforeend', `<div class="modal-backdrop" id="modal"><form class="modal-card" onsubmit="inviteAdminV070(event)"><div class="modal-heading"><h2>Add Administrator</h2><button type="button" onclick="closeModal()">×</button></div><div class="form-grid">
+    <label class="field wide"><span>Name</span><input name="display_name" required placeholder="Example: Rochelle"></label><label class="field wide"><span>Email</span><input type="email" name="email" required placeholder="name@example.com"></label></div><p class="muted">They will receive a secure email link to choose their Command Center password.</p><div class="modal-actions"><button type="button" class="secondary" onclick="closeModal()">Cancel</button><button class="primary" type="submit">Send Admin Invite</button></div></form></div>`);
+}
+
+async function inviteAdminV070(event) {
+  event.preventDefault(); const f = new FormData(event.target); const button = event.submitter; if (button) button.disabled = true;
+  const { data, error } = await db.functions.invoke('manage-admin-users',{body:{action:'invite', email:String(f.get('email')).trim(), display_name:String(f.get('display_name')).trim()}});
+  if (button) button.disabled = false;
+  if (error || data?.error) return toast(data?.error || error?.message || 'Could not add administrator.', 'error');
+  closeModal(); toast('Administrator added and password link sent.'); await loadAdmin();
+}
+
+async function removeAdminV070(userId) {
+  if (!confirm('Remove this administrator from the Wedding Command Center? Their Supabase Auth account will not be deleted.')) return;
+  const { data, error } = await db.functions.invoke('manage-admin-users',{body:{action:'remove', user_id:userId}});
+  if (error || data?.error) return toast(data?.error || error?.message || 'Could not remove administrator.','error');
+  toast('Administrator removed.'); await loadAdmin();
+}
+
+async function sendAdminResetV070(userId) {
+  if (!confirm('Send this administrator a secure password-reset email?')) return;
+  const { data, error } = await db.functions.invoke('manage-admin-users',{body:{action:'reset', user_id:userId}});
+  if (error || data?.error) return toast(data?.error || error?.message || 'Could not send password reset.','error');
+  toast('Password reset email sent.');
+}
+
+async function forgotAdminPasswordV070() {
+  const email = prompt('Enter your Command Center email address:');
+  if (!email) return;
+  const redirectTo = `${window.location.origin}/command-center.html?reset-password=1`;
+  const { error } = await db.auth.resetPasswordForEmail(email.trim(), { redirectTo });
+  if (error) return toast(error.message,'error');
+  toast('Password reset email sent. Check your inbox.');
+}
+
+async function saveRecoveredPasswordV070(event) {
+  event.preventDefault(); const f = new FormData(event.target); const password = String(f.get('password') || ''); const confirmPassword = String(f.get('confirm_password') || ''); const message = document.getElementById('login-message');
+  if (password !== confirmPassword) { message.innerHTML = '<p class="error">The passwords do not match.</p>'; return; }
+  const { error } = await db.auth.updateUser({ password });
+  if (error) { message.innerHTML = `<p class="error">${esc(error.message)}</p>`; return; }
+  passwordRecoveryV070 = false; toast('Password updated.'); await loadAdmin();
+}
+
+if (db) {
+  db.auth.onAuthStateChange((event, newSession) => {
+    if (event === 'PASSWORD_RECOVERY') { passwordRecoveryV070 = true; session = newSession; render(); }
+  });
+}
+
+// Re-render once v0.7.0 overrides are installed.
+render();
+if (isAdminPortal && session) loadAdmin();

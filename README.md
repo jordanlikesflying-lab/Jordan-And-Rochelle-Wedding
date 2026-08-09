@@ -107,3 +107,20 @@ New in this patch:
 - resend job request emails
 - more reliable public gallery and homepage favorite photo loading
 - `EMAIL-AND-FUNCTIONS-SETUP.md` contains the one-time email setup
+
+
+## v0.7.0 — Settings
+
+Run `v0.7.0-settings.sql` once before deploying.
+
+Settings now controls:
+- couple names, wedding date and ceremony time
+- venue name/address/city/state
+- homepage welcome heading and message
+- editable Wedding Details and map search
+- RSVP open/closed with database enforcement
+- Gift Registry and Photo Album visibility
+- Amazon and other registry links
+- private administrator list and password handling
+
+For Add Administrator / password-reset buttons, deploy the included `manage-admin-users` Edge Function.

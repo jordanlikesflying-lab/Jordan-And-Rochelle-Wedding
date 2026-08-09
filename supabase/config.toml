@@ -6,3 +6,6 @@ verify_jwt = false
 
 [functions.send-job-request]
 verify_jwt = true
+
+[functions.manage-admin-users]
+verify_jwt = true
