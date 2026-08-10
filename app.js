@@ -5522,3 +5522,100 @@ function openAssignmentDialogForPersonV102(rsvpId = '', invitationId = '', perso
   });
 }
 
+
+/* ===== v1.0.3 Invitation duplicate-name fix + restore row actions ===== */
+
+// Invitation duplicates now explicitly include an exact Primary First + Last match,
+// regardless of household wording, phone, email, or address.
+invitationDuplicateReasonsV101 = function(invitation) {
+  const reasons = [];
+  const invitations = (adminData.invitations || []).filter(item => item.status !== 'cancelled');
+
+  const first = normalizeDuplicateTextV101(invitation.primary_first_name);
+  const last = normalizeDuplicateTextV101(invitation.primary_last_name);
+  const fullName = `${first} ${last}`.trim();
+  const household = normalizeDuplicateTextV101(invitation.household_name);
+  const email = normalizeDuplicateTextV101(invitation.email);
+  const phone = normalizePhoneV101(invitation.phone);
+
+  if (first && last) {
+    const samePrimaryName = invitations.some(other =>
+      other.id !== invitation.id &&
+      normalizeDuplicateTextV101(other.primary_first_name) === first &&
+      normalizeDuplicateTextV101(other.primary_last_name) === last
+    );
+    if (samePrimaryName) reasons.push('same first and last name');
+  } else if (fullName) {
+    const samePrimaryName = invitations.some(other =>
+      other.id !== invitation.id &&
+      normalizeDuplicateTextV101(`${other.primary_first_name || ''} ${other.primary_last_name || ''}`) === fullName
+    );
+    if (samePrimaryName) reasons.push('same primary name');
+  }
+
+  if (household) {
+    const sameHousehold = invitations.some(other =>
+      other.id !== invitation.id &&
+      normalizeDuplicateTextV101(other.household_name) === household
+    );
+    if (sameHousehold) reasons.push('same household name');
+  }
+
+  if (email) {
+    const sameEmail = invitations.some(other =>
+      other.id !== invitation.id &&
+      normalizeDuplicateTextV101(other.email) === email
+    );
+    if (sameEmail) reasons.push('same email');
+  }
+
+  if (phone.length >= 7) {
+    const samePhone = invitations.some(other =>
+      other.id !== invitation.id &&
+      normalizePhoneV101(other.phone) === phone
+    );
+    if (samePhone) reasons.push('same phone');
+  }
+
+  return [...new Set(reasons)];
+};
+
+// Restore the Actions column that was lost when duplicate highlighting was added.
+invitationTable = function(items) {
+  if (!items.length) return '<p class="muted">No invitations found.</p>';
+
+  return `<div class="table-wrap"><table>
+    <thead><tr>
+      <th>Household</th>
+      <th>Primary contact</th>
+      <th>Contact</th>
+      <th>Allowed</th>
+      <th>Status</th>
+      <th>Actions</th>
+    </tr></thead>
+    <tbody>
+      ${items.map(item => {
+        const reasons = invitationDuplicateReasonsV101(item);
+        return `<tr class="${reasons.length ? 'possible-duplicate-row-v101' : ''}">
+          <td>
+            <strong>${esc(item.household_name)}</strong>
+            ${duplicateBadgeV101(reasons)}
+            <br><small>${esc([item.city, item.state].filter(Boolean).join(', '))}</small>
+          </td>
+          <td>${esc(item.primary_first_name)} ${esc(item.primary_last_name)}</td>
+          <td>${esc(item.phone || item.email || '—')}</td>
+          <td>${item.max_guests}</td>
+          <td>${statusPill(item.status)}</td>
+          <td>
+            <div class="table-actions">
+              <button onclick="openGuestByInvitation('${item.id}')">Profile</button>
+              <button onclick="openInvitationDialog('${item.id}')">Edit</button>
+              <button class="danger-text" onclick="deleteInvitation('${item.id}')">Delete</button>
+            </div>
+          </td>
+        </tr>`;
+      }).join('')}
+    </tbody>
+  </table></div>`;
+};
+

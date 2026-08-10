@@ -1,0 +1,8 @@
+Jordan & Rochelle Wedding Manager v1.0.3
+
+NO SQL REQUIRED.
+
+Fixes:
+- invitation duplicates are flagged when Primary First Name + Primary Last Name match another invitation
+- invitation row Actions column restored
+- Profile, Edit, and Delete buttons restored

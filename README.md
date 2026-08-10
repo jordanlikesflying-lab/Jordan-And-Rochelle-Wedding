@@ -285,3 +285,12 @@ This package supersedes the earlier v1.0.1 package if it has not yet been deploy
 No SQL migration is required when upgrading from v1.0.1-final.
 
 Guest Profiles now keeps each household together while showing every named person underneath it. Selecting a person focuses the detail panel on that individual, shows that person's Wedding Jobs, and preselects that person when assigning a job.
+
+
+## v1.0.3 — Invitation Duplicate Fix
+
+No SQL required.
+
+- Invitations are now flagged whenever another invitation has the same Primary First Name + Primary Last Name.
+- The Invite List Actions column is restored.
+- Profile, Edit, and Delete buttons are restored on invitation rows.
