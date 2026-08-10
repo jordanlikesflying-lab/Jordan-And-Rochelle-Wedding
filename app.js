@@ -3229,3 +3229,456 @@ if (db) {
 // Re-render once v0.7.0 overrides are installed.
 render();
 if (isAdminPortal && session) loadAdmin();
+
+
+/* ===== v0.7.1 RSVP merge + reviewed queue + claim-a-gift registry ===== */
+
+let reviewModeV071 = 'pending';
+
+function rsvpPeopleV071(rsvpId) {
+  return (adminData.rsvpPeople || [])
+    .filter(p => p.rsvp_id === rsvpId)
+    .sort((a,b) => Number(a.sort_order || 0) - Number(b.sort_order || 0));
+}
+
+function reviewedRsvpsV071() {
+  return (adminData.rsvps || []).filter(r => r.verification_status !== 'needs_review');
+}
+
+function setReviewModeV071(mode) {
+  reviewModeV071 = mode === 'reviewed' ? 'reviewed' : 'pending';
+  selectedReviewId = null;
+  reviewSearch = '';
+  render();
+}
+
+function reviewMatchesV071(item, query) {
+  const invitation = item.invitation_id ? adminData.invitations.find(i => i.id === item.invitation_id) : null;
+  const people = rsvpPeopleV071(item.id).map(p => p.person_name).join(' ');
+  return [
+    item.first_name, item.last_name, item.phone, item.email, item.city,
+    item.additional_guests, invitation?.household_name, people
+  ].some(value => String(value || '').toLowerCase().includes(query));
+}
+
+function renderReviewV071() {
+  const pending = needsReview();
+  const reviewed = reviewedRsvpsV071();
+  const source = reviewModeV071 === 'reviewed' ? reviewed : pending;
+  const query = reviewSearch.trim().toLowerCase();
+  const filtered = query ? source.filter(item => reviewMatchesV071(item, query)) : source;
+
+  if (!selectedReviewId || !filtered.some(item => item.id === selectedReviewId)) {
+    selectedReviewId = filtered[0]?.id || null;
+  }
+  const selected = filtered.find(item => item.id === selectedReviewId);
+
+  const tabs = `<div class="review-tabs-v071">
+    <button class="${reviewModeV071 === 'pending' ? 'active' : ''}" onclick="setReviewModeV071('pending')">Needs Review <span>${pending.length}</span></button>
+    <button class="${reviewModeV071 === 'reviewed' ? 'active' : ''}" onclick="setReviewModeV071('reviewed')">Reviewed RSVPs <span>${reviewed.length}</span></button>
+  </div>`;
+
+  let body = '';
+  if (!source.length && reviewModeV071 === 'pending') {
+    body = `<div class="empty-state admin-empty"><div class="big-icon">✓</div><h2>All caught up</h2>
+      <p>There are no new RSVP submissions waiting for approval.</p>
+      <button class="primary" onclick="setReviewModeV071('reviewed')">View Reviewed RSVPs</button></div>`;
+  } else if (!source.length) {
+    body = `<div class="empty-state admin-empty"><h2>No reviewed RSVPs yet</h2><button class="secondary" onclick="setReviewModeV071('pending')">Back to Needs Review</button></div>`;
+  } else {
+    body = `<div class="review-toolbar"><input type="search" value="${esc(reviewSearch)}" placeholder="Search ${reviewModeV071 === 'pending' ? 'new' : 'reviewed'} RSVPs" oninput="setReviewSearch(this.value)">
+      <span>${filtered.length} of ${source.length}</span></div>
+      <div class="review-split">
+        <aside class="review-queue">${filtered.length ? filtered.map(item => {
+          const invitation = item.invitation_id ? adminData.invitations.find(i => i.id === item.invitation_id) : null;
+          return `<button class="queue-item ${item.id === selectedReviewId ? 'active' : ''}" onclick="selectReview('${item.id}')">
+            <strong>${esc(item.first_name)} ${esc(item.last_name)}</strong>
+            <span>${titleCase(item.attendance)} · ${formatDate(item.created_at)}</span>
+            ${reviewModeV071 === 'reviewed' ? `<small>${esc(invitation?.household_name || titleCase(item.verification_status))}</small>` : ''}
+          </button>`;
+        }).join('') : '<p class="muted queue-empty">No matching RSVPs.</p>'}</aside>
+        <section class="review-detail">${selected ? renderReviewDetailV071(selected) : '<div class="empty-state admin-empty"><h2>No response selected</h2></div>'}</section>
+      </div>`;
+  }
+
+  return `<div class="admin-view"><div class="view-heading"><div><p class="eyebrow">Guest responses</p><h1>RSVP Review</h1>
+    <p>New submissions stay separate from RSVPs you have already reviewed.</p></div></div>${tabs}${body}</div>`;
+}
+
+function renderReviewDetailV071(rsvp) {
+  const invitation = rsvp.invitation_id ? adminData.invitations.find(i => i.id === rsvp.invitation_id) : null;
+  const people = rsvpPeopleV071(rsvp.id);
+  const peopleHtml = people.length
+    ? `<div class="review-people-v071">${people.map(p => `<div><strong>${esc(p.person_name)}</strong><span>${titleCase(p.person_type)}</span></div>`).join('')}</div>`
+    : `<p class="muted">${esc(rsvp.additional_guests || 'No additional named guests stored.')}</p>`;
+
+  const mergeButton = rsvp.verification_status !== 'rejected'
+    ? `<button class="primary" onclick="openMergeRsvpDialogV071('${rsvp.id}')">${invitation ? 'Change / Merge Household' : 'Merge with Invitation'}</button>`
+    : '';
+
+  return `<article class="review-card review-card-detail">
+    <div class="review-card-top"><div><h2>${esc(rsvp.first_name)} ${esc(rsvp.last_name)}</h2><p>${titleCase(rsvp.attendance)} · Submitted ${formatDate(rsvp.created_at)}</p></div>${statusPill(rsvp.verification_status)}</div>
+    ${invitation ? `<div class="linked-household-v071"><span>Linked household</span><strong>${esc(invitation.household_name)}</strong></div>` : ''}
+    <div class="review-details">
+      <div><span>Address</span><strong>${esc(rsvp.street_address || '—')}<br>${esc([rsvp.city, rsvp.state, rsvp.zip_code].filter(Boolean).join(', '))}</strong></div>
+      <div><span>Contact</span><strong>${esc(rsvp.phone || '—')}${rsvp.email ? `<br>${esc(rsvp.email)}` : ''}</strong></div>
+      <div><span>Party</span><strong>${rsvp.adult_count} adult${rsvp.adult_count === 1 ? '' : 's'}, ${rsvp.child_count} child${rsvp.child_count === 1 ? '' : 'ren'}</strong></div>
+      <div><span>Review status</span><strong>${titleCase(rsvp.verification_status)}</strong></div>
+    </div>
+    <section class="profile-section"><h3>Everyone on this RSVP</h3>${peopleHtml}</section>
+    ${rsvp.notes ? `<div class="review-notes"><span>Notes</span><p>${esc(rsvp.notes)}</p></div>` : ''}
+    <div class="review-actions">${mergeButton}<button class="secondary" onclick="openRsvpDialog('${rsvp.id}')">Edit RSVP</button>
+      ${rsvp.verification_status === 'needs_review' ? `<button class="secondary" onclick="verifyRsvp('${rsvp.id}')">Verify Without Match</button><button class="secondary" onclick="createInvitationFromRsvp('${rsvp.id}')">Create Invitation</button><button class="danger-button" onclick="rejectRsvp('${rsvp.id}')">Reject</button>` : ''}
+    </div>
+  </article>`;
+}
+
+function mergeRsvpPreviewHtmlV071(rsvp, invitation) {
+  if (!invitation) return '<p class="muted">Choose an invitation to compare the records.</p>';
+  const people = rsvpPeopleV071(rsvp.id);
+  const rsvpNames = people.length ? people.map(p => p.person_name).join(', ') : `${rsvp.first_name} ${rsvp.last_name}`;
+  return `<div class="merge-compare-v071">
+    <section><p class="eyebrow">RSVP submission</p><h3>${esc(rsvp.first_name)} ${esc(rsvp.last_name)}</h3>
+      <dl><dt>People</dt><dd>${esc(rsvpNames)}</dd><dt>Phone</dt><dd>${esc(rsvp.phone || '—')}</dd><dt>Email</dt><dd>${esc(rsvp.email || '—')}</dd>
+      <dt>Address</dt><dd>${esc([rsvp.street_address, rsvp.city, rsvp.state, rsvp.zip_code].filter(Boolean).join(', ') || '—')}</dd></dl>
+    </section>
+    <div class="merge-arrow-v071">→</div>
+    <section><p class="eyebrow">Invitation household kept</p><h3>${esc(invitation.household_name)}</h3>
+      <dl><dt>Main name</dt><dd>${esc(invitation.primary_first_name)} ${esc(invitation.primary_last_name)}</dd><dt>Phone</dt><dd>${esc(invitation.phone || '—')}</dd><dt>Email</dt><dd>${esc(invitation.email || '—')}</dd>
+      <dt>Address</dt><dd>${esc([invitation.street_address, invitation.city, invitation.state, invitation.zip_code].filter(Boolean).join(', ') || '—')}</dd></dl>
+    </section>
+  </div>`;
+}
+
+function openMergeRsvpDialogV071(rsvpId) {
+  const rsvp = adminData.rsvps.find(r => r.id === rsvpId);
+  if (!rsvp) return;
+  const choices = suggestedInvitations(rsvp);
+  const initialId = rsvp.invitation_id || choices[0]?.id || '';
+  const initial = adminData.invitations.find(i => i.id === initialId);
+  const options = choices.map(i => `<option value="${i.id}" ${i.id === initialId ? 'selected' : ''}>${esc(i.household_name)} — ${esc(i.primary_first_name)} ${esc(i.primary_last_name)}</option>`).join('');
+
+  document.body.insertAdjacentHTML('beforeend', `<div class="modal-backdrop" id="modal"><form class="modal-card modal-wide-v071" onsubmit="saveMergeRsvpV071(event,'${rsvp.id}')">
+    <div class="modal-heading"><div><p class="eyebrow">Merge household</p><h2>Connect RSVP to Invitation</h2></div><button type="button" onclick="closeModal()">×</button></div>
+    <label class="field wide"><span>Invitation household</span><select name="invitation_id" required onchange="updateMergeRsvpPreviewV071('${rsvp.id}',this.value)"><option value="">Choose a household…</option>${options}</select></label>
+    <div id="merge-rsvp-preview-v071">${mergeRsvpPreviewHtmlV071(rsvp, initial)}</div>
+    <fieldset class="merge-choice-v071"><legend>Contact information on the invitation</legend>
+      <label><input type="radio" name="contact_source" value="rsvp" checked><span><strong>Use the RSVP contact details</strong><small>Recommended when the RSVP has the newest phone, email, or address. Blank RSVP fields will not erase existing information.</small></span></label>
+      <label><input type="radio" name="contact_source" value="invitation"><span><strong>Keep the invitation contact details</strong><small>The RSVP stays attached, but the existing invitation contact information remains the household contact.</small></span></label>
+    </fieldset>
+    <p class="merge-note-v071">The invitation household and main name stay intact. All named adults/children and wedding-job assignments stay connected to the RSVP.</p>
+    <div class="modal-actions"><button type="button" class="secondary" onclick="closeModal()">Cancel</button><button class="primary" type="submit">Merge & Verify</button></div>
+  </form></div>`);
+}
+
+function updateMergeRsvpPreviewV071(rsvpId, invitationId) {
+  const rsvp = adminData.rsvps.find(r => r.id === rsvpId);
+  const invitation = adminData.invitations.find(i => i.id === invitationId);
+  const target = document.getElementById('merge-rsvp-preview-v071');
+  if (target && rsvp) target.innerHTML = mergeRsvpPreviewHtmlV071(rsvp, invitation);
+}
+
+async function saveMergeRsvpV071(event, rsvpId) {
+  event.preventDefault();
+  const f = new FormData(event.target);
+  const invitationId = String(f.get('invitation_id') || '');
+  if (!invitationId) return toast('Choose an invitation household.', 'error');
+  const button = event.submitter;
+  if (button) button.disabled = true;
+  const { data, error } = await db.rpc('merge_rsvp_into_invitation', {
+    p_rsvp_id: rsvpId,
+    p_invitation_id: invitationId,
+    p_contact_source: String(f.get('contact_source') || 'rsvp')
+  });
+  if (error) {
+    if (button) button.disabled = false;
+    return toast(error.message, 'error');
+  }
+  closeModal();
+  toast('RSVP merged into the invitation household.');
+  await loadAdmin();
+}
+
+const invitationTableBeforeV071 = invitationTable;
+invitationTable = function(items) {
+  if (!items.length) return '<p class="muted">No invitations found.</p>';
+  return `<div class="table-wrap"><table><thead><tr><th>Household</th><th>Primary contact</th><th>Contact</th><th>Allowed</th><th>Status</th><th>Actions</th></tr></thead><tbody>
+    ${items.map(item => `<tr><td><strong>${esc(item.household_name)}</strong><br><small>${esc([item.city,item.state].filter(Boolean).join(', '))}</small></td>
+      <td>${esc(item.primary_first_name)} ${esc(item.primary_last_name)}</td><td>${esc(item.phone || item.email || '—')}</td><td>${item.max_guests}</td><td>${statusPill(item.status)}</td>
+      <td><div class="table-actions"><button onclick="openInvitationDialog('${item.id}')">Edit</button><button onclick="openMergeInvitationDialogV071('${item.id}')">Merge Duplicate</button><button class="danger-text" onclick="deleteInvitation('${item.id}')">Delete</button></div></td></tr>`).join('')}
+  </tbody></table></div>`;
+};
+
+function mergeInvitationPreviewV071(source, target) {
+  if (!target) return '<p class="muted">Choose the household you want to keep.</p>';
+  const linkedRsvps = (adminData.rsvps || []).filter(r => r.invitation_id === source.id);
+  return `<div class="merge-compare-v071">
+    <section class="merge-source-v071"><p class="eyebrow">Will be merged & removed</p><h3>${esc(source.household_name)}</h3><p>${linkedRsvps.length} linked RSVP${linkedRsvps.length === 1 ? '' : 's'}</p>
+      <small>${esc(source.phone || source.email || 'No contact info')}</small></section>
+    <div class="merge-arrow-v071">→</div>
+    <section><p class="eyebrow">Household kept</p><h3>${esc(target.household_name)}</h3><p>${esc(target.primary_first_name)} ${esc(target.primary_last_name)}</p>
+      <small>${esc(target.phone || target.email || 'No contact info')}</small></section>
+  </div>`;
+}
+
+function openMergeInvitationDialogV071(sourceId) {
+  const source = adminData.invitations.find(i => i.id === sourceId);
+  if (!source) return;
+  const targets = adminData.invitations.filter(i => i.id !== sourceId);
+  if (!targets.length) return toast('There is no other invitation to merge this household into.', 'error');
+  const initial = targets[0];
+  document.body.insertAdjacentHTML('beforeend', `<div class="modal-backdrop" id="modal"><form class="modal-card modal-wide-v071" onsubmit="saveMergeInvitationV071(event,'${source.id}')">
+    <div class="modal-heading"><div><p class="eyebrow">Duplicate cleanup</p><h2>Merge Invitations</h2></div><button type="button" onclick="closeModal()">×</button></div>
+    <label class="field wide"><span>Keep this household</span><select name="target_id" required onchange="updateMergeInvitationPreviewV071('${source.id}',this.value)">
+      ${targets.map(i => `<option value="${i.id}">${esc(i.household_name)} — ${esc(i.primary_first_name)} ${esc(i.primary_last_name)}</option>`).join('')}</select></label>
+    <div id="merge-invitation-preview-v071">${mergeInvitationPreviewV071(source, initial)}</div>
+    <fieldset class="merge-choice-v071"><legend>Contact details</legend>
+      <label><input type="radio" name="contact_source" value="target" checked><span><strong>Keep the household I selected</strong><small>Any blank contact fields will be filled from the duplicate when possible.</small></span></label>
+      <label><input type="radio" name="contact_source" value="source"><span><strong>Use contact details from the duplicate</strong><small>The selected household name/main person still stays the same.</small></span></label>
+    </fieldset>
+    <p class="merge-note-v071"><strong>This removes the duplicate invitation.</strong> Its RSVPs and job assignments will be moved to the household you keep.</p>
+    <div class="modal-actions"><button type="button" class="secondary" onclick="closeModal()">Cancel</button><button class="primary" type="submit">Merge Invitations</button></div>
+  </form></div>`);
+}
+
+function updateMergeInvitationPreviewV071(sourceId, targetId) {
+  const source = adminData.invitations.find(i => i.id === sourceId);
+  const targetInv = adminData.invitations.find(i => i.id === targetId);
+  const target = document.getElementById('merge-invitation-preview-v071');
+  if (target && source) target.innerHTML = mergeInvitationPreviewV071(source, targetInv);
+}
+
+async function saveMergeInvitationV071(event, sourceId) {
+  event.preventDefault();
+  const f = new FormData(event.target);
+  const targetId = String(f.get('target_id') || '');
+  if (!targetId) return;
+  if (!confirm('Merge these invitations? The duplicate household will be removed after its RSVPs and jobs are moved.')) return;
+  const button = event.submitter;
+  if (button) button.disabled = true;
+  const { error } = await db.rpc('merge_invitations', {
+    p_source_id: sourceId,
+    p_target_id: targetId,
+    p_contact_source: String(f.get('contact_source') || 'target')
+  });
+  if (error) {
+    if (button) button.disabled = false;
+    return toast(error.message, 'error');
+  }
+  closeModal();
+  toast('Duplicate invitations merged.');
+  await loadAdmin();
+}
+
+/* ----- Claim-a-gift public registry ----- */
+
+function currentRegistryClaimV071(itemId) {
+  return (adminData.registryClaims || []).find(c => c.registry_item_id === itemId && !c.released_at) || null;
+}
+
+function renderPublicRegistryItemV071(item) {
+  const imageUrl = safeUrl(item.image_url);
+  const exampleUrl = safeUrl(item.item_url);
+  const claimed = Boolean(item.claimed_at);
+  return `<article class="public-registry-card registry-claim-card-v071 ${claimed ? 'claimed' : 'available'}">
+    ${imageUrl ? `<div class="registry-image-wrap"><img src="${esc(imageUrl)}" alt="${esc(item.title)}" loading="lazy" onerror="this.parentElement.classList.add('image-failed');this.remove()"></div>` : `<div class="registry-image-wrap registry-image-placeholder">🎁</div>`}
+    <div class="public-registry-copy">
+      <div class="registry-card-status-v071">${claimed ? '<span class="gift-claimed-v071">Claimed</span>' : '<span class="gift-available-v071">Available</span>'}</div>
+      ${item.store_name ? `<p class="registry-store">Suggested: ${esc(item.store_name)}</p>` : ''}
+      <h3>${esc(item.title)}</h3>
+      ${item.description ? `<p>${esc(item.description)}</p>` : ''}
+      ${claimed
+        ? `<div class="claimed-message-v071"><strong>Someone has this one covered.</strong><span>Thank you!</span></div>`
+        : `<button class="primary" onclick="openGiftClaimV071('${item.id}')">I'll Take This Gift</button>`}
+      ${exampleUrl ? `<a class="registry-example-link-v071" href="${esc(exampleUrl)}" target="_blank" rel="noopener">View example / idea ↗</a>` : ''}
+    </div>
+  </article>`;
+}
+
+renderRegistry = function() {
+  if (!booleanSettingV070('registry_visible', true)) {
+    return `<main class="content-page">${mainMenuButton()}<div class="empty-state"><div class="big-icon">🎁</div><h2>Gift Registry</h2><p>The registry is not currently being shown on our wedding website.</p></div></main>`;
+  }
+  const s = settingsV070();
+  const amazonRaw = String(s.amazon_registry_url || '').trim();
+  const otherRaw = String(s.other_registry_url || '').trim();
+  const amazon = amazonRaw ? safeUrl(amazonRaw) : '';
+  const other = otherRaw ? safeUrl(otherRaw) : '';
+
+  let body = '';
+  if (amazon || other) {
+    body += `<div class="registry-link-row">
+      ${amazon ? `<a class="primary" target="_blank" rel="noopener" href="${esc(amazon)}">View Our Amazon Registry</a>` : ''}
+      ${other ? `<a class="secondary registry-external" target="_blank" rel="noopener" href="${esc(other)}">View Other Registry</a>` : ''}
+    </div>`;
+  }
+
+  if (publicRegistryLoading) body += `<div class="loading-card">Loading our gift list…</div>`;
+  else if (publicRegistryError) body += `<div class="error-card"><h3>We couldn't load the gift list.</h3><button class="primary" onclick="loadPublicRegistry()">Try Again</button></div>`;
+  else if (publicRegistry.length) body += `<section class="gift-list-intro-v071"><h3>Gifts You Can Choose</h3><p>Choose an available gift, then buy it wherever you prefer. No account or password is needed.</p></section><div class="public-registry-grid">${publicRegistry.map(renderPublicRegistryItemV071).join('')}</div>`;
+  else body += `<div class="empty-state"><div class="big-icon">🎁</div><h3>Gift list coming soon</h3><p>Gift ideas will appear here.</p></div>`;
+
+  return `<main class="content-page">${mainMenuButton()}<div class="page-heading"><p class="eyebrow">With gratitude</p><h2>Gift Registry</h2><p>Your presence means so much to us. Gifts are optional.</p></div>${body}</main>`;
+};
+
+function openGiftClaimV071(itemId) {
+  const item = publicRegistry.find(i => i.id === itemId);
+  if (!item || item.claimed_at) return;
+  document.body.insertAdjacentHTML('beforeend', `<div class="modal-backdrop guest-claim-modal-v071" id="modal"><form class="modal-card" onsubmit="saveGiftClaimV071(event,'${item.id}')">
+    <div class="modal-heading"><div><p class="eyebrow">Claim a gift</p><h2>${esc(item.title)}</h2></div><button type="button" onclick="closeModal()">×</button></div>
+    <p>We'll mark this gift as claimed so another guest doesn't choose the same one. You can buy it wherever you like.</p>
+    <div class="form-grid">
+      <label class="field wide"><span>Your name</span><input name="claimant_name" required maxlength="120" autocomplete="name" placeholder="Your name"></label>
+      <label class="field wide"><span>Email (optional)</span><input type="email" name="claimant_email" maxlength="254" autocomplete="email" placeholder="For a confirmation and release link"></label>
+    </div>
+    <p class="muted">Your name and email are private and only visible to Jordan and Rochelle. Other guests will only see that the gift is claimed.</p>
+    <div class="modal-actions"><button type="button" class="secondary" onclick="closeModal()">Cancel</button><button class="primary" type="submit">I'll Take It</button></div>
+  </form></div>`);
+}
+
+async function saveGiftClaimV071(event, itemId) {
+  event.preventDefault();
+  const f = new FormData(event.target);
+  const name = String(f.get('claimant_name') || '').trim();
+  const email = String(f.get('claimant_email') || '').trim() || null;
+  const button = event.submitter;
+  if (!name) return;
+  if (button) { button.disabled = true; button.textContent = 'Claiming…'; }
+
+  const { data, error } = await db.rpc('claim_registry_item', {
+    p_item_id: itemId,
+    p_name: name,
+    p_email: email
+  });
+  const result = Array.isArray(data) ? data[0] : data;
+  if (error || !result?.success) {
+    if (button) { button.disabled = false; button.textContent = "I'll Take It"; }
+    const message = error?.message || result?.message || 'This gift could not be claimed.';
+    if (/already/i.test(message)) {
+      const item = publicRegistry.find(i => i.id === itemId);
+      if (item) item.claimed_at = new Date().toISOString();
+      closeModal(); render();
+    }
+    return toast(message, 'error');
+  }
+
+  const item = publicRegistry.find(i => i.id === itemId);
+  if (item) item.claimed_at = new Date().toISOString();
+
+  let emailMessage = '';
+  if (email && result.claim_token) {
+    try {
+      const { error: emailError } = await db.functions.invoke('send-gift-claim-confirmation', {
+        body: { claim_token: result.claim_token }
+      });
+      emailMessage = emailError
+        ? '<p class="muted">The gift is claimed, but the confirmation email could not be sent. Contact Jordan or Rochelle if you need to release it.</p>'
+        : `<p>We sent a confirmation to <strong>${esc(email)}</strong> with a private link you can use if you change your mind.</p>`;
+    } catch {
+      emailMessage = '<p class="muted">The gift is claimed, but the confirmation email could not be sent. Contact Jordan or Rochelle if you need to release it.</p>';
+    }
+  } else {
+    emailMessage = '<p>If you change your mind, contact Jordan or Rochelle and they can make the gift available again.</p>';
+  }
+
+  const modal = document.getElementById('modal');
+  if (modal) modal.innerHTML = `<div class="modal-card gift-claim-success-v071"><div class="big-icon">♥</div><h2>Thank you, ${esc(name)}!</h2>
+    <p><strong>${esc(result.gift_title || item?.title || 'This gift')}</strong> is now marked as claimed.</p>${emailMessage}
+    <button class="primary" onclick="closeModal();render()">Done</button></div>`;
+}
+
+/* ----- Registry manager claim status ----- */
+
+function renderRegistryManagerV071() {
+  const all = registryItemsSorted();
+  const query = registrySearch.trim().toLowerCase();
+  const filtered = query ? all.filter(item => [item.title,item.description,item.store_name,item.item_url,currentRegistryClaimV071(item.id)?.claimant_name,currentRegistryClaimV071(item.id)?.claimant_email]
+    .some(value => String(value || '').toLowerCase().includes(query))) : all;
+  const claimedCount = all.filter(item => item.claimed_at).length;
+  const availableCount = all.filter(item => item.is_active && !item.claimed_at).length;
+  let selected = filtered.find(item => item.id === selectedRegistryId) || null;
+  if (!selected && filtered.length) { selected = filtered[0]; selectedRegistryId = selected.id; }
+
+  return `<div class="admin-view">
+    <div class="view-heading"><div><p class="eyebrow">Gift choices</p><h1>Registry Manager</h1><p>Guests can claim a gift here and buy it wherever they prefer.</p></div>
+      <div class="heading-actions"><button class="secondary" onclick="document.getElementById('gift-import').click()">Import Gift List</button><input id="gift-import" hidden type="file" accept=".xlsx,.xls,.csv" onchange="importGiftListV062(event)"><button class="primary" onclick="openRegistryDialog()">Add Gift</button></div></div>
+    <section class="registry-metric-grid">${metricCard('Gift ideas', all.length, 'Total')}${metricCard('Available', availableCount, 'Ready to claim')}${metricCard('Claimed', claimedCount, 'Guests have chosen')}</section>
+    <div class="registry-toolbar"><input id="registry-search" type="search" value="${esc(registrySearch)}" placeholder="Search gifts or guest claims" oninput="setRegistrySearch(this.value)"><span>${filtered.length} item${filtered.length === 1 ? '' : 's'}</span></div>
+    <div class="registry-split">
+      <aside class="registry-list">${filtered.length ? filtered.map(item => renderRegistryListItemV071(item, selected?.id === item.id)).join('') : '<p class="muted registry-empty">No matching gifts.</p>'}</aside>
+      <section class="registry-detail">${selected ? renderRegistryDetailV071(selected, all) : `<div class="empty-state admin-empty"><div class="big-icon">🎁</div><h2>No gifts yet</h2><p>Add or import your first gift idea.</p><button class="primary" onclick="openRegistryDialog()">Add Gift</button></div>`}</section>
+    </div>
+    ${all.length ? `<section class="admin-panel registry-preview-panel"><div class="panel-heading"><div><h2>Guest preview</h2><p class="muted">Claimed gifts stay visible but cannot be claimed again.</p></div></div>
+      <div class="registry-preview-grid">${all.filter(i => i.is_active).map(renderRegistryPreviewV071).join('') || '<p class="muted">No gifts are visible to guests.</p>'}</div></section>` : ''}
+  </div>`;
+}
+
+function renderRegistryListItemV071(item, active) {
+  const claim = currentRegistryClaimV071(item.id);
+  const status = !item.is_active ? 'Hidden' : (item.claimed_at ? 'Claimed' : 'Available');
+  const cls = !item.is_active ? 'hidden' : (item.claimed_at ? 'claimed' : 'visible');
+  return `<button class="registry-list-item ${active ? 'active' : ''}" onclick="selectRegistryItem('${item.id}')">
+    <span class="registry-list-copy"><strong>${esc(item.title)}</strong><small>${claim ? `Claimed by ${esc(claim.claimant_name)}` : esc(item.store_name || 'Buy anywhere')}</small></span>
+    <span class="registry-visibility ${cls}">${status}</span></button>`;
+}
+
+function renderRegistryPreviewV071(item) {
+  const image = safeUrl(item.image_url);
+  return `<article class="registry-preview-card ${item.claimed_at ? 'claimed' : ''}">
+    ${image ? `<img src="${esc(image)}" alt="${esc(item.title)}" loading="lazy">` : '<div class="registry-preview-placeholder">🎁</div>'}
+    <div><strong>${esc(item.title)}</strong><span>${item.claimed_at ? 'Claimed' : 'Available'}</span></div></article>`;
+}
+
+function renderRegistryDetailV071(item, all) {
+  const index = all.findIndex(entry => entry.id === item.id);
+  const itemUrl = safeUrl(item.item_url);
+  const imageUrl = safeUrl(item.image_url);
+  const claim = currentRegistryClaimV071(item.id);
+  return `<article class="registry-detail-card">
+    <div class="registry-detail-header"><div><p class="eyebrow">Gift item</p><h2>${esc(item.title)}</h2>
+      <div class="profile-pills"><span class="registry-visibility ${!item.is_active ? 'hidden' : (item.claimed_at ? 'claimed' : 'visible')}">${!item.is_active ? 'Hidden' : (item.claimed_at ? 'Claimed' : 'Available')}</span></div></div>
+      <div class="profile-actions"><button class="secondary" onclick="openRegistryDialog('${item.id}')">Edit</button><button class="danger-button" onclick="deleteRegistryItem('${item.id}')">Delete</button></div></div>
+    <div class="registry-detail-body"><div class="registry-detail-image">${imageUrl ? `<img src="${esc(imageUrl)}" alt="${esc(item.title)}">` : '<div class="registry-large-placeholder">🎁</div>'}</div>
+      <div><div class="profile-info-grid registry-info-grid">
+        <div class="profile-info"><span>Suggested store</span><strong>${esc(item.store_name || 'Buy anywhere')}</strong></div>
+        <div class="profile-info"><span>Guest order</span><strong>${index + 1} of ${all.length}</strong></div>
+        <div class="profile-info"><span>Visibility</span><strong>${item.is_active ? 'Shown to guests' : 'Hidden from guests'}</strong></div>
+        <div class="profile-info"><span>Example link</span><strong>${itemUrl ? `<a href="${esc(itemUrl)}" target="_blank" rel="noopener">Open example ↗</a>` : '—'}</strong></div>
+      </div>
+      ${item.description ? `<section class="profile-section"><h3>Description</h3><p class="job-description">${esc(item.description)}</p></section>` : ''}
+      ${claim ? `<section class="profile-section registry-claim-admin-v071"><div class="panel-heading"><div><h3>Claimed Gift</h3><p class="muted">This information is private.</p></div></div>
+        <div class="profile-info-grid"><div class="profile-info"><span>Claimed by</span><strong>${esc(claim.claimant_name)}</strong></div>
+        <div class="profile-info"><span>Email</span><strong>${esc(claim.claimant_email || 'Not provided')}</strong></div>
+        <div class="profile-info"><span>Claimed</span><strong>${formatDate(claim.created_at)}</strong></div></div>
+        <button class="secondary" onclick="releaseRegistryClaimAdminV071('${item.id}')">Release Claim</button></section>` : ''}
+      <section class="profile-section"><div class="registry-action-grid"><button class="secondary" onclick="toggleRegistryVisibility('${item.id}')">${item.is_active ? 'Hide from Guests' : 'Show to Guests'}</button>
+        <button class="secondary" onclick="moveRegistryItem('${item.id}',-1)" ${index <= 0 ? 'disabled' : ''}>Move Up</button>
+        <button class="secondary" onclick="moveRegistryItem('${item.id}',1)" ${index >= all.length - 1 ? 'disabled' : ''}>Move Down</button></div></section>
+      </div></div>
+  </article>`;
+}
+
+async function releaseRegistryClaimAdminV071(itemId) {
+  const item = adminData.registry.find(i => i.id === itemId);
+  if (!confirm(`Make "${item?.title || 'this gift'}" available again?`)) return;
+  const { error } = await db.rpc('admin_release_registry_item', { p_item_id: itemId });
+  if (error) return toast(error.message, 'error');
+  toast('Gift is available again.');
+  await loadAdmin();
+}
+
+const baseLoadAdminV071 = loadAdmin;
+loadAdmin = async function() {
+  await baseLoadAdminV071();
+  if (!db || !session) return;
+  const { data, error } = await db.from('registry_claims').select('*').order('created_at', { ascending:false });
+  if (!error) adminData.registryClaims = data || [];
+  render();
+};
+
+const baseRenderAdminViewV071 = renderAdminView;
+renderAdminView = function() {
+  if (adminView === 'review') return renderReviewV071();
+  if (adminView === 'registry') return renderRegistryManagerV071();
+  return baseRenderAdminViewV071();
+};

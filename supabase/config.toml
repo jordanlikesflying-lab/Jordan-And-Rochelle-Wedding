@@ -9,3 +9,6 @@ verify_jwt = true
 
 [functions.manage-admin-users]
 verify_jwt = true
+
+[functions.send-gift-claim-confirmation]
+verify_jwt = false

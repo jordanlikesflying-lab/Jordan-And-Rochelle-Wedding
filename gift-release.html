@@ -1,0 +1,44 @@
+<!doctype html>
+<html lang="en">
+<head>
+  <meta charset="UTF-8">
+  <meta name="viewport" content="width=device-width,initial-scale=1">
+  <meta name="robots" content="noindex,nofollow,noarchive">
+  <title>Release Gift · Jordan & Rochelle</title>
+  <link rel="stylesheet" href="styles.css">
+  <script src="https://cdn.jsdelivr.net/npm/@supabase/supabase-js@2"></script>
+  <script src="config.js"></script>
+</head>
+<body>
+  <div class="job-response-page">
+    <main class="job-response-card">
+      <p class="eyebrow">Jordan & Rochelle</p>
+      <h1>Release a Gift</h1>
+      <div id="release-content">
+        <p>If your plans changed, you can make this gift available for another guest.</p>
+        <button class="primary" onclick="releaseGift()">Make Gift Available Again</button>
+      </div>
+    </main>
+  </div>
+<script>
+const cfg = window.WEDDING_CONFIG || {};
+const db = cfg.supabaseUrl && cfg.supabaseAnonKey ? window.supabase.createClient(cfg.supabaseUrl,cfg.supabaseAnonKey) : null;
+const token = new URLSearchParams(location.search).get('token') || '';
+const target = document.getElementById('release-content');
+function esc(v=''){return String(v).replace(/[&<>'"]/g,c=>({'&':'&amp;','<':'&lt;','>':'&gt;',"'":'&#39;','"':'&quot;'}[c]));}
+if(!token || !db) target.innerHTML='<div class="error-card"><h2>Invalid link</h2><p>This release link is incomplete.</p></div>';
+async function releaseGift(){
+  if(!token || !db) return;
+  if(!confirm('Make this gift available to other guests again?')) return;
+  target.innerHTML='<div class="loading-card">Releasing gift…</div>';
+  const {data,error}=await db.rpc('release_registry_claim',{p_token:token});
+  const result=Array.isArray(data)?data[0]:data;
+  if(error || !result?.success){
+    target.innerHTML=`<div class="error-card"><h2>We couldn't release the gift.</h2><p>${esc(error?.message || result?.message || 'Please contact Jordan or Rochelle.')}</p></div>`;
+    return;
+  }
+  target.innerHTML=`<div class="success-card"><div class="big-icon">♥</div><h2>Gift released</h2><p><strong>${esc(result.gift_title || 'The gift')}</strong> is available for another guest again.</p><a class="secondary response-home-link" href="/">Return to Wedding Website</a></div>`;
+}
+</script>
+</body>
+</html>

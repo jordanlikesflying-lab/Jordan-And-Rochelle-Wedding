@@ -124,3 +124,19 @@ Settings now controls:
 - private administrator list and password handling
 
 For Add Administrator / password-reset buttons, deploy the included `manage-admin-users` Edge Function.
+
+
+## v0.7.1
+
+Run `v0.7.1-registry-and-merge.sql` once before deploying.
+
+Changes:
+- RSVP Review now has separate **Needs Review** and **Reviewed RSVPs** views.
+- New side-by-side RSVP → invitation merge tool.
+- Duplicate invitation households can be merged safely; linked RSVPs/jobs move with them.
+- The optional second registry button appears only when a valid second URL is saved.
+- Wedding gift items can be claimed without accounts or passwords.
+- Claimant name/email are private; other guests only see **Claimed**.
+- Guests can buy claimed gifts anywhere they want.
+- If a claimant gives an email, the optional `send-gift-claim-confirmation` function emails a private release link.
+- Command Center shows who claimed a gift and can release the claim manually.

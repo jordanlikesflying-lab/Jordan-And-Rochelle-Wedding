@@ -74,3 +74,14 @@ supabase functions deploy manage-admin-users
 ```
 
 If using the Supabase Dashboard editor, create a function named `manage-admin-users` and paste the contents of `supabase/functions/manage-admin-users/index.ts`. Leave JWT verification ON for this function.
+
+
+## v0.7.1 gift-claim confirmation function
+
+v0.7.1 adds one optional Edge Function using the same Resend secrets you already configured:
+
+`send-gift-claim-confirmation`
+
+Deploy it from Supabase Edge Functions and turn **Verify JWT / legacy JWT verification OFF** for this function, because a guest can claim a gift without signing in.
+
+No new email secrets are required.
