@@ -140,3 +140,16 @@ Changes:
 - Guests can buy claimed gifts anywhere they want.
 - If a claimant gives an email, the optional `send-gift-claim-confirmation` function emails a private release link.
 - Command Center shows who claimed a gift and can release the claim manually.
+
+
+## v0.7.2
+
+Run `v0.7.2-duplicate-rsvp-cleanup.sql` once.
+
+Changes:
+- Adds **Delete Duplicate RSVP** to Reviewed RSVPs.
+- Deleting an RSVP never deletes the invitation household.
+- Named RSVP people are removed with the duplicate RSVP.
+- Deletion is blocked when wedding-job assignments still reference that RSVP.
+- Invitation status is recalculated after deletion.
+- Permanently includes the v0.7.1 invitation-status enum merge fix.
