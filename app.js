@@ -4107,3 +4107,114 @@ render = function() {
 
 // Run once for the initial screen too.
 polishUiV090();
+
+
+/* ===== v0.9.1 Public RSVP RLS hotfix =====
+   Public guests must submit through the existing security-definer RPC.
+   Direct inserts into public.rsvps are intentionally blocked by RLS.
+*/
+submitRsvpV062 = async function(event) {
+  event.preventDefault();
+
+  const button = event.target.querySelector('button[type=submit]');
+  const message = document.getElementById('rsvp-message');
+
+  if (!configured) {
+    message.innerHTML = '<p class="error">The RSVP system has not been connected yet.</p>';
+    return;
+  }
+
+  button.disabled = true;
+  button.textContent = 'Submitting…';
+
+  const form = new FormData(event.target);
+  const attendance = form.get('attendance');
+  const adultCount = attendance === 'attending' ? Number(form.get('adult_count') || 0) : 0;
+  const childCount = attendance === 'attending' ? Number(form.get('child_count') || 0) : 0;
+
+  const people = [];
+  if (attendance === 'attending') {
+    for (let i = 0; i < adultCount; i++) {
+      people.push({
+        person_name: String(form.get(`adult_name_${i}`) || '').trim(),
+        person_type: 'adult',
+        sort_order: i
+      });
+    }
+    for (let i = 0; i < childCount; i++) {
+      people.push({
+        person_name: String(form.get(`child_name_${i}`) || '').trim(),
+        person_type: 'child',
+        sort_order: adultCount + i
+      });
+    }
+
+    if (people.some(person => !person.person_name)) {
+      button.disabled = false;
+      button.textContent = 'Submit RSVP';
+      message.innerHTML = '<p class="error">Please enter a name for everyone attending.</p>';
+      return;
+    }
+  }
+
+  const email = String(form.get('email') || '').trim() || null;
+  const additionalGuests = people.slice(1).map(person => person.person_name).join(', ') || null;
+  const notes = String(form.get('notes') || '').trim() || null;
+
+  const { data: rsvpId, error } = await db.rpc('submit_public_rsvp', {
+    p_first_name: String(form.get('first_name') || '').trim(),
+    p_last_name: String(form.get('last_name') || '').trim(),
+    p_street_address: String(form.get('street_address') || '').trim(),
+    p_city: String(form.get('city') || '').trim(),
+    p_state: String(form.get('state') || '').trim(),
+    p_zip_code: String(form.get('zip_code') || '').trim(),
+    p_phone: String(form.get('phone') || '').trim(),
+    p_email: email,
+    p_attendance: attendance,
+    p_adult_count: adultCount,
+    p_child_count: childCount,
+    p_additional_guests: additionalGuests,
+    p_notes: notes
+  });
+
+  if (error) {
+    console.error('Public RSVP submission failed:', error);
+    button.disabled = false;
+    button.textContent = 'Submit RSVP';
+
+    const raw = String(error.message || '');
+    const friendly = raw.includes('RSVPs are currently closed')
+      ? 'RSVPs are currently closed. Please contact Jordan or Rochelle if you need to make or change an RSVP.'
+      : raw.includes('Name and phone number are required')
+        ? 'Please enter your first name, last name, and phone number.'
+        : 'We could not save your RSVP. Please try again.';
+
+    message.innerHTML = `<p class="error">${esc(friendly)}</p>`;
+    return;
+  }
+
+  if (!rsvpId) {
+    button.disabled = false;
+    button.textContent = 'Submit RSVP';
+    message.innerHTML = '<p class="error">We could not save your RSVP. Please try again.</p>';
+    return;
+  }
+
+  if (people.length) {
+    const { error: peopleError } = await db
+      .from('rsvp_people')
+      .insert(people.map(person => ({ ...person, rsvp_id: rsvpId })));
+
+    if (peopleError) {
+      console.error('RSVP saved but attendee names failed:', peopleError);
+      button.disabled = false;
+      button.textContent = 'Submit RSVP';
+      message.innerHTML = '<p class="error">Your RSVP was saved, but the attendee names could not be saved. Please contact Jordan or Rochelle so we can correct it.</p>';
+      return;
+    }
+  }
+
+  if (email) sendRsvpConfirmationV063(rsvpId);
+
+  event.target.outerHTML = `<div class="success-card"><div class="big-icon">♥</div><h2>Thank you!</h2><p>Your RSVP and guest names have been received.</p>${email ? '<p class="muted">We’ll also send an acknowledgement to the email address you provided.</p>' : ''}${mainMenuButton()}</div>`;
+};

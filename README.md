@@ -189,3 +189,13 @@ This release intentionally adds no new wedding-planning features. It focuses on:
 - final regression checklist before v1.0.0
 
 See `v0.9.0-FINAL-TEST-CHECKLIST.md`.
+
+
+## v0.9.1 — Public RSVP RLS Hotfix
+
+No SQL migration is required.
+
+Fixes public RSVP submission failing with:
+`new row violates row-level security policy for table "rsvps"`
+
+The guest RSVP form now uses the existing `submit_public_rsvp` database RPC instead of attempting a direct insert into the protected RSVP table. Named attendee rows are still stored in `rsvp_people`, and RSVP confirmation email behavior is unchanged.

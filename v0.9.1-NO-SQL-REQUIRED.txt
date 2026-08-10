@@ -1,0 +1,11 @@
+Jordan & Rochelle Wedding Manager v0.9.1 RSVP hotfix
+
+NO SUPABASE SQL IS REQUIRED.
+
+Cause:
+The public RSVP form was attempting a direct insert into the RLS-protected rsvps table.
+
+Fix:
+The public form now uses the existing submit_public_rsvp RPC, which is the secure public entry point already present in the database.
+
+Deploy all website files to GitHub/main, let Netlify finish, and then repeat the Test Guest RSVP.
