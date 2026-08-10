@@ -3682,3 +3682,65 @@ renderAdminView = function() {
   if (adminView === 'registry') return renderRegistryManagerV071();
   return baseRenderAdminViewV071();
 };
+
+
+/* ===== v0.7.2 duplicate RSVP cleanup ===== */
+
+const baseRenderReviewDetailV072 = renderReviewDetailV071;
+renderReviewDetailV071 = function(rsvp) {
+  let html = baseRenderReviewDetailV072(rsvp);
+
+  if (reviewModeV071 === 'reviewed') {
+    const invitation = rsvp.invitation_id
+      ? adminData.invitations.find(i => i.id === rsvp.invitation_id)
+      : null;
+
+    const duplicatePanel = `<section class="duplicate-rsvp-panel-v072">
+      <div>
+        <strong>Duplicate RSVP?</strong>
+        <p>Delete only this RSVP record. The invitation household will stay in place.</p>
+      </div>
+      <button class="danger-button" onclick="deleteDuplicateRsvpV072('${rsvp.id}')">Delete Duplicate RSVP</button>
+    </section>`;
+
+    html = html.replace('</article>', `${duplicatePanel}</article>`);
+  }
+
+  return html;
+};
+
+async function deleteDuplicateRsvpV072(rsvpId) {
+  const rsvp = adminData.rsvps.find(r => r.id === rsvpId);
+  if (!rsvp) return;
+
+  const invitation = rsvp.invitation_id
+    ? adminData.invitations.find(i => i.id === rsvp.invitation_id)
+    : null;
+
+  const people = rsvpPeopleV071(rsvp.id);
+  const names = people.length
+    ? people.map(p => p.person_name).join(', ')
+    : `${rsvp.first_name} ${rsvp.last_name}`.trim();
+
+  const householdText = invitation
+    ? `\nHousehold: ${invitation.household_name}`
+    : '';
+
+  if (!confirm(
+    `Delete this duplicate RSVP?\n\n${names}${householdText}\n\n` +
+    `This removes the RSVP and its named adults/children, but it will NOT delete the invitation household.`
+  )) return;
+
+  const { data, error } = await db.rpc('admin_delete_duplicate_rsvp', {
+    p_rsvp_id: rsvpId
+  });
+
+  if (error) {
+    return toast(error.message, 'error');
+  }
+
+  const result = Array.isArray(data) ? data[0] : data;
+  toast(result?.message || 'Duplicate RSVP deleted.');
+  selectedReviewId = null;
+  await loadAdmin();
+}
