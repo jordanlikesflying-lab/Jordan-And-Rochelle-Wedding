@@ -1,0 +1,15 @@
+Jordan & Rochelle Wedding Manager
+v1.0.0 — Wedding Ready
+
+This release is a promotion of the fully tested v0.9.2 build.
+No new application features were introduced during promotion.
+
+NO SUPABASE SQL CHANGES ARE REQUIRED when upgrading from v0.9.2.
+
+Deployment:
+1. Replace the GitHub repository files with this release.
+2. Commit to main.
+3. Let Netlify deploy automatically.
+4. Open the installed Wedding Command Center once after deployment so the service worker updates to v1.0.0.
+
+Status: WEDDING READY

@@ -212,3 +212,31 @@ No SQL migration is required.
 - iPhone/iPad Apple touch icon support.
 - Android/Chrome manifest and service-worker support.
 - Network-first service worker to avoid stale deployed files.
+
+
+## v1.0.0 — Wedding Ready
+
+This is the first production-ready release of the Jordan & Rochelle Wedding Manager.
+
+No database migration is required when upgrading from v0.9.2.
+
+v1.0.0 promotes the fully tested v0.9.2 build without adding new functionality. The tested release includes:
+
+- public wedding website
+- RSVP submission with named adults and children
+- RSVP review, matching, merging, verification, and safe duplicate deletion
+- invitation list and guest profiles
+- Wedding Jobs assignments, email requests, and Accept/Decline responses
+- claim-a-gift registry with secure release links
+- private photo library, guest album, and homepage favorite
+- Wedding Summary dashboard
+- editable Settings and guest-site visibility controls
+- responsive mobile layouts
+- installable Android/iPhone home-screen web app support
+- separate installable Wedding Command Center
+- cache-busting and network-first service-worker behavior
+- final regression testing completed before promotion
+
+### Release status
+
+**Wedding Ready — v1.0.0**
