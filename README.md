@@ -240,3 +240,41 @@ v1.0.0 promotes the fully tested v0.9.2 build without adding new functionality. 
 ### Release status
 
 **Wedding Ready — v1.0.0**
+
+
+## v1.0.1 — Invitation People
+
+Run `v1.0.1-invitation-people.sql` before deploying.
+
+- `John and Joe Weaver` stays the household name.
+- Automatically creates `John Weaver` and `Joe Weaver` as separate invited people.
+- Supports `John & Joe Weaver` and `John Weaver and Joe Smith`.
+- Existing invitations are backfilled by the SQL migration.
+- Guest Profiles show people on an invitation before RSVP.
+- Wedding Jobs can select each invited person separately before RSVP.
+- Excel/CSV import preserves Household Name when provided.
+
+
+### v1.0.1 revised additions
+
+This package supersedes the earlier v1.0.1 package if it has not yet been deployed.
+
+- possible duplicates are flagged in Invite List, RSVP Review, and Guest Profiles
+- duplicate checks compare household/name plus matching phone/email, and multiple RSVPs linked to the same invitation
+- flags are warnings only; nothing is automatically deleted or merged
+- Edit RSVP now includes a named-person editor for every adult and child
+- older RSVPs without `rsvp_people` rows are prefilled from the primary guest and legacy Additional Guests text where possible
+- saving preserves existing RSVP-person IDs where possible so Wedding Job links remain intact
+- after saving an old RSVP, each named person becomes selectable individually for Wedding Jobs
+
+
+### v1.0.1 final additions
+
+- Wedding Jobs flag likely duplicate job records.
+- Gift Registry flags likely duplicate gift records.
+- Registry items have a Quantity Wanted field.
+- Guests claim one unit at a time.
+- Multiple guests can safely claim the same gift until the requested quantity is reached.
+- Each guest claim has its own private release token.
+- Admin can release individual claims without releasing everyone else's claim.
+- Excel/CSV gift import supports optional Quantity / Qty / Quantity Wanted columns.

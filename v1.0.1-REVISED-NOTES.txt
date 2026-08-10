@@ -1,0 +1,13 @@
+v1.0.1 REVISED PACKAGE
+
+Use this package instead of the earlier v1.0.1 ZIP if you have not deployed yet.
+
+Includes:
+- invitation household names automatically split into individual invited people
+- possible duplicate flags in Invite List, RSVP Review, and Guest Profiles
+- editable adult/child names on older RSVPs
+- individual Wedding Job selection after those RSVP people are saved
+
+SQL:
+Run v1.0.1-invitation-people.sql once before deploying.
+No additional SQL is required for the duplicate flags or old-RSVP person editor.

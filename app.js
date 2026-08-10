@@ -4218,3 +4218,1080 @@ submitRsvpV062 = async function(event) {
 
   event.target.outerHTML = `<div class="success-card"><div class="big-icon">♥</div><h2>Thank you!</h2><p>Your RSVP and guest names have been received.</p>${email ? '<p class="muted">We’ll also send an acknowledgement to the email address you provided.</p>' : ''}${mainMenuButton()}</div>`;
 };
+
+
+/* ===== v1.0.1 Invitation People ===== */
+
+function parseInvitationPeopleV101(householdName, primaryFirst = '', primaryLast = '') {
+  const household = String(householdName || '').trim().replace(/\s+/g, ' ');
+  const primary = `${String(primaryFirst || '').trim()} ${String(primaryLast || '').trim()}`.trim();
+
+  if (!household) return primary ? [primary] : [];
+  if (/\s+(household|family)$/i.test(household)) return primary ? [primary] : [household];
+
+  const normalized = household.replace(/\s*&\s*/g, ' and ');
+  const parts = normalized.split(/\s+and\s+/i).map(value => value.trim()).filter(Boolean);
+
+  if (parts.length === 2) {
+    const [left, right] = parts;
+    const leftTokens = left.split(/\s+/);
+    const rightTokens = right.split(/\s+/);
+
+    if (leftTokens.length === 1 && rightTokens.length >= 2) {
+      const sharedLast = rightTokens[rightTokens.length - 1];
+      return [`${left} ${sharedLast}`, right];
+    }
+
+    if (leftTokens.length === 1 && rightTokens.length === 1 && String(primaryLast || '').trim()) {
+      const last = String(primaryLast).trim();
+      return [`${left} ${last}`, `${right} ${last}`];
+    }
+
+    return [left, right];
+  }
+
+  return [household];
+}
+
+function splitPersonNameV101(fullName) {
+  const parts = String(fullName || '').trim().split(/\s+/).filter(Boolean);
+  if (!parts.length) return { first: '', last: '' };
+  if (parts.length === 1) return { first: parts[0], last: '' };
+  return { first: parts.slice(0, -1).join(' '), last: parts[parts.length - 1] };
+}
+
+const baseLoadAdminV101 = loadAdmin;
+loadAdmin = async function() {
+  await baseLoadAdminV101();
+  if (!db || !session) return;
+  const { data, error } = await db
+    .from('invitation_people')
+    .select('*')
+    .order('sort_order', { ascending: true });
+  if (!error) adminData.invitationPeople = data || [];
+  render();
+};
+
+function invitationPeopleV101(invitationId) {
+  return (adminData.invitationPeople || [])
+    .filter(person => person.invitation_id === invitationId)
+    .sort((a, b) => Number(a.sort_order || 0) - Number(b.sort_order || 0));
+}
+
+assignmentPeopleV063 = function() {
+  const rows = [];
+  const rsvps = adminData.rsvps || [];
+  const rsvpPeople = adminData.rsvpPeople || [];
+  const invitationPeople = adminData.invitationPeople || [];
+  const invitations = adminData.invitations || [];
+
+  rsvps.forEach(rsvp => {
+    const invitation = rsvp.invitation_id ? invitations.find(i => i.id === rsvp.invitation_id) : null;
+    const household = invitation?.household_name || `${rsvp.first_name} ${rsvp.last_name}`.trim();
+    const members = rsvpPeople.filter(p => p.rsvp_id === rsvp.id);
+
+    if (members.length) {
+      members.forEach(member => rows.push({
+        key: `person:${member.id}`,
+        person_id: member.id,
+        rsvp_id: rsvp.id,
+        invitation_id: rsvp.invitation_id || null,
+        person_name: member.person_name,
+        household,
+        email: rsvp.email || invitation?.email || ''
+      }));
+    } else {
+      rows.push({
+        key: `rsvp:${rsvp.id}`,
+        person_id: null,
+        rsvp_id: rsvp.id,
+        invitation_id: rsvp.invitation_id || null,
+        person_name: `${rsvp.first_name} ${rsvp.last_name}`.trim(),
+        household,
+        email: rsvp.email || invitation?.email || ''
+      });
+    }
+  });
+
+  invitations.forEach(invitation => {
+    if (rsvps.some(r => r.invitation_id === invitation.id)) return;
+
+    const members = invitationPeople.filter(p => p.invitation_id === invitation.id);
+    if (members.length) {
+      members.forEach(member => rows.push({
+        key: `invite-person:${member.id}`,
+        person_id: null,
+        rsvp_id: null,
+        invitation_id: invitation.id,
+        person_name: member.person_name,
+        household: invitation.household_name,
+        email: invitation.email || ''
+      }));
+    } else {
+      rows.push({
+        key: `invite:${invitation.id}`,
+        person_id: null,
+        rsvp_id: null,
+        invitation_id: invitation.id,
+        person_name: `${invitation.primary_first_name} ${invitation.primary_last_name}`.trim() || invitation.household_name,
+        household: invitation.household_name,
+        email: invitation.email || ''
+      });
+    }
+  });
+
+  return rows.sort((a, b) => a.person_name.localeCompare(b.person_name));
+};
+
+const baseRenderGuestProfileV101 = renderGuestProfile;
+renderGuestProfile = function(record) {
+  let html = baseRenderGuestProfileV101(record);
+  if (!record.rsvp && record.invitation) {
+    const people = invitationPeopleV101(record.invitation.id);
+    if (people.length) {
+      const block = `<section class="profile-section invitation-people-v101">
+        <div class="profile-section-heading"><h3>People on this invitation</h3></div>
+        <div class="named-attendee-list">
+          ${people.map(person => `<div><strong>${esc(person.person_name)}</strong><span>Invited</span></div>`).join('')}
+        </div>
+      </section>`;
+      html = html.replace('<section class="profile-section">', block + '<section class="profile-section">');
+    }
+  }
+  return html;
+};
+
+saveInvitation = async function(event, id = '') {
+  event.preventDefault();
+  const submit = event.target.querySelector('[type=submit]');
+  if (submit) submit.disabled = true;
+
+  const form = new FormData(event.target);
+  const payload = Object.fromEntries(form.entries());
+
+  payload.household_name = String(payload.household_name || '').trim();
+  payload.primary_first_name = String(payload.primary_first_name || '').trim();
+  payload.primary_last_name = String(payload.primary_last_name || '').trim();
+  payload.max_guests = Number(payload.max_guests || 1);
+
+  for (const key of ['phone','email','street_address','city','state','zip_code','private_notes']) {
+    payload[key] = String(payload[key] || '').trim() || null;
+  }
+
+  if (!payload.household_name) {
+    if (submit) submit.disabled = false;
+    return toast('Enter a household name.', 'error');
+  }
+
+  const result = id
+    ? await db.from('invitations').update(payload).eq('id', id)
+    : await db.from('invitations').insert(payload);
+
+  if (result.error) {
+    toast(result.error.message, 'error');
+    if (submit) submit.disabled = false;
+    return;
+  }
+
+  closeModal();
+  toast(id ? 'Invitation and people updated.' : 'Invitation and people added.');
+  await loadAdmin();
+};
+
+const baseOpenInvitationDialogV101 = openInvitationDialog;
+openInvitationDialog = function(id = null) {
+  baseOpenInvitationDialogV101(id);
+  const householdInput = document.querySelector('#modal input[name="household_name"]');
+  const field = householdInput?.closest('.field');
+  if (field && !field.querySelector('.invitation-people-help-v101')) {
+    field.insertAdjacentHTML(
+      'beforeend',
+      '<small class="invitation-people-help-v101">Example: “John and Joe Weaver” automatically creates John Weaver and Joe Weaver as separate invited people.</small>'
+    );
+  }
+};
+
+importInvitationsExcelV062 = async function(event) {
+  const file = event.target.files?.[0];
+  event.target.value = '';
+  if (!file) return;
+
+  try {
+    const XLSX = await ensureXlsxV063();
+    const wb = XLSX.read(await file.arrayBuffer(), { type: 'array' });
+    const rows = XLSX.utils.sheet_to_json(wb.Sheets[wb.SheetNames[0]], { defval: '' });
+    if (!rows.length) return toast('The spreadsheet has no invitation rows.', 'error');
+
+    const norm = rows.map(row => {
+      const get = (...keys) => {
+        for (const key of keys) {
+          const found = Object.keys(row).find(
+            value => value.toLowerCase().replace(/[^a-z0-9]/g, '') === key
+          );
+          if (found) return row[found];
+        }
+        return '';
+      };
+
+      const rawFirst = String(get('primaryfirstname','firstname','first') || '').trim();
+      const rawLast = String(get('primarylastname','lastname','last') || '').trim();
+      const explicitHousehold = String(get('householdname','household','invitationname') || '').trim();
+      const household = explicitHousehold || `${rawFirst} ${rawLast}`.trim();
+
+      const parsedPeople = parseInvitationPeopleV101(household, rawFirst, rawLast);
+      const primary = splitPersonNameV101(parsedPeople[0] || `${rawFirst} ${rawLast}`.trim());
+
+      return {
+        household_name: household,
+        primary_first_name: primary.first || rawFirst,
+        primary_last_name: primary.last || rawLast,
+        street_address: String(get('streetaddress','address') || '').trim() || null,
+        city: String(get('city') || '').trim() || null,
+        state: String(get('state') || '').trim() || null,
+        zip_code: String(get('zipcode','zip') || '').trim() || null,
+        phone: String(get('phone','phonenumber') || '').trim() || null,
+        email: String(get('email') || '').trim() || null,
+        max_guests: Number(get('maxguests','guests') || Math.max(1, parsedPeople.length)) || Math.max(1, parsedPeople.length),
+        status: 'invited'
+      };
+    }).filter(row => row.household_name && row.primary_first_name);
+
+    if (!norm.length) return toast('Could not find invitation names in the spreadsheet.', 'error');
+    if (!confirm(`Import ${norm.length} invitations? Individual people will be created automatically from household names such as “John and Joe Weaver”.`)) return;
+
+    const { error } = await db.from('invitations').insert(norm);
+    if (error) return toast(error.message, 'error');
+
+    toast(`${norm.length} invitations imported and people created.`);
+    await loadAdmin();
+  } catch (error) {
+    toast(`Could not read spreadsheet: ${error.message}`, 'error');
+  }
+};
+
+
+/* ===== v1.0.1 revised: duplicate flags + editable RSVP people ===== */
+
+function normalizeDuplicateTextV101(value) {
+  return String(value || '')
+    .toLowerCase()
+    .replace(/[^a-z0-9@]+/g, ' ')
+    .trim()
+    .replace(/\s+/g, ' ');
+}
+
+function normalizePhoneV101(value) {
+  return String(value || '').replace(/\D+/g, '');
+}
+
+function duplicateKeysForInvitationV101(invitation) {
+  const keys = [];
+  const household = normalizeDuplicateTextV101(invitation.household_name);
+  const person = normalizeDuplicateTextV101(`${invitation.primary_first_name || ''} ${invitation.primary_last_name || ''}`);
+  const email = normalizeDuplicateTextV101(invitation.email);
+  const phone = normalizePhoneV101(invitation.phone);
+  if (household) keys.push(`household:${household}`);
+  if (person) keys.push(`person:${person}`);
+  if (email) keys.push(`email:${email}`);
+  if (phone.length >= 7) keys.push(`phone:${phone}`);
+  return keys;
+}
+
+function duplicateKeysForRsvpV101(rsvp) {
+  const keys = [];
+  const person = normalizeDuplicateTextV101(`${rsvp.first_name || ''} ${rsvp.last_name || ''}`);
+  const email = normalizeDuplicateTextV101(rsvp.email);
+  const phone = normalizePhoneV101(rsvp.phone);
+  if (person) keys.push(`person:${person}`);
+  if (email) keys.push(`email:${email}`);
+  if (phone.length >= 7) keys.push(`phone:${phone}`);
+  if (rsvp.invitation_id && rsvp.verification_status !== 'rejected') keys.push(`invitation:${rsvp.invitation_id}`);
+  return keys;
+}
+
+function duplicateIndexV101(items, keyFn) {
+  const index = new Map();
+  items.forEach(item => {
+    keyFn(item).forEach(key => {
+      if (!index.has(key)) index.set(key, []);
+      index.get(key).push(item.id);
+    });
+  });
+  return index;
+}
+
+function duplicateReasonsForV101(item, items, keyFn, labels) {
+  const index = duplicateIndexV101(items, keyFn);
+  const reasons = [];
+  keyFn(item).forEach(key => {
+    const matches = index.get(key) || [];
+    if (matches.length > 1) {
+      const prefix = key.split(':', 1)[0];
+      reasons.push(labels[prefix] || 'matching information');
+    }
+  });
+  return [...new Set(reasons)];
+}
+
+function invitationDuplicateReasonsV101(invitation) {
+  return duplicateReasonsForV101(
+    invitation,
+    (adminData.invitations || []).filter(item => item.status !== 'cancelled'),
+    duplicateKeysForInvitationV101,
+    { household: 'same household name', person: 'same primary name', email: 'same email', phone: 'same phone' }
+  );
+}
+
+function rsvpDuplicateReasonsV101(rsvp) {
+  return duplicateReasonsForV101(
+    rsvp,
+    (adminData.rsvps || []).filter(item => item.verification_status !== 'rejected'),
+    duplicateKeysForRsvpV101,
+    { person: 'same guest name', email: 'same email', phone: 'same phone', invitation: 'same linked invitation' }
+  );
+}
+
+function duplicateBadgeV101(reasons) {
+  if (!reasons?.length) return '';
+  const title = `Possible duplicate: ${reasons.join(', ')}`;
+  return `<span class="duplicate-flag-v101" title="${esc(title)}">⚠ Possible duplicate</span>`;
+}
+
+function recordDuplicateReasonsV101(record) {
+  const reasons = [];
+  if (record.rsvp) reasons.push(...rsvpDuplicateReasonsV101(record.rsvp));
+  if (record.invitation) reasons.push(...invitationDuplicateReasonsV101(record.invitation));
+  return [...new Set(reasons)];
+}
+
+// Invite List: flag duplicate-looking records directly in the table.
+invitationTable = function(items) {
+  if (!items.length) return '<p class="muted">No invitations found.</p>';
+  return `<div class="table-wrap"><table><thead><tr><th>Household</th><th>Primary contact</th><th>Contact</th><th>Allowed</th><th>Status</th></tr></thead><tbody>
+    ${items.map(item => {
+      const reasons = invitationDuplicateReasonsV101(item);
+      return `<tr class="${reasons.length ? 'possible-duplicate-row-v101' : ''}">
+        <td><strong>${esc(item.household_name)}</strong>${duplicateBadgeV101(reasons)}</td>
+        <td>${esc(item.primary_first_name)} ${esc(item.primary_last_name)}</td>
+        <td>${esc(item.phone || item.email || '—')}</td>
+        <td>${item.max_guests}</td>
+        <td>${statusPill(item.status)}</td>
+      </tr>`;
+    }).join('')}
+  </tbody></table></div>`;
+};
+
+// Guest Profiles list: flag the same record anywhere it appears.
+renderGuestListItem = function(record, active) {
+  const sub = record.rsvp ? `${titleCase(record.rsvp.attendance)} · ${record.household}` : `No RSVP yet · ${record.household}`;
+  const reasons = recordDuplicateReasonsV101(record);
+  return `<button class="guest-list-item ${active ? 'active' : ''} ${reasons.length ? 'possible-duplicate-item-v101' : ''}" onclick="selectGuestRecord('${record.key}')">
+    <span class="guest-avatar">${esc((record.name || '?').charAt(0).toUpperCase())}</span>
+    <span class="guest-list-copy"><strong>${esc(record.name || record.household)}</strong><small>${esc(sub)}</small>${duplicateBadgeV101(reasons)}</span>
+    ${record.rsvp ? statusPill(record.rsvp.verification_status) : statusPill(record.invitation.status)}
+  </button>`;
+};
+
+const baseRenderGuestProfileDuplicatesV101 = renderGuestProfile;
+renderGuestProfile = function(record) {
+  let html = baseRenderGuestProfileDuplicatesV101(record);
+  const reasons = recordDuplicateReasonsV101(record);
+  if (reasons.length) {
+    const warning = `<div class="duplicate-warning-v101"><strong>⚠ Possible duplicate</strong><span>${esc(reasons.join(' · '))}</span></div>`;
+    html = html.replace('<div class="profile-info-grid">', warning + '<div class="profile-info-grid">');
+  }
+  return html;
+};
+
+// RSVP Review: duplicate flags are visible in both Needs Review and Reviewed RSVPs.
+renderReviewV071 = function() {
+  const pending = needsReview();
+  const reviewed = reviewedRsvpsV071();
+  const source = reviewModeV071 === 'reviewed' ? reviewed : pending;
+  const query = reviewSearch.trim().toLowerCase();
+  const filtered = query ? source.filter(item => reviewMatchesV071(item, query)) : source;
+
+  if (!selectedReviewId || !filtered.some(item => item.id === selectedReviewId)) {
+    selectedReviewId = filtered[0]?.id || null;
+  }
+  const selected = filtered.find(item => item.id === selectedReviewId);
+
+  const tabs = `<div class="review-tabs-v071">
+    <button class="${reviewModeV071 === 'pending' ? 'active' : ''}" onclick="setReviewModeV071('pending')">Needs Review <span>${pending.length}</span></button>
+    <button class="${reviewModeV071 === 'reviewed' ? 'active' : ''}" onclick="setReviewModeV071('reviewed')">Reviewed RSVPs <span>${reviewed.length}</span></button>
+  </div>`;
+
+  let body = '';
+  if (!source.length && reviewModeV071 === 'pending') {
+    body = `<div class="empty-state admin-empty"><div class="big-icon">✓</div><h2>All caught up</h2>
+      <p>There are no new RSVP submissions waiting for approval.</p>
+      <button class="primary" onclick="setReviewModeV071('reviewed')">View Reviewed RSVPs</button></div>`;
+  } else if (!source.length) {
+    body = `<div class="empty-state admin-empty"><h2>No reviewed RSVPs yet</h2><button class="secondary" onclick="setReviewModeV071('pending')">Back to Needs Review</button></div>`;
+  } else {
+    body = `<div class="review-toolbar"><input type="search" value="${esc(reviewSearch)}" placeholder="Search ${reviewModeV071 === 'pending' ? 'new' : 'reviewed'} RSVPs" oninput="setReviewSearch(this.value)">
+      <span>${filtered.length} of ${source.length}</span></div>
+      <div class="review-split">
+        <aside class="review-queue">${filtered.length ? filtered.map(item => {
+          const invitation = item.invitation_id ? adminData.invitations.find(i => i.id === item.invitation_id) : null;
+          const reasons = rsvpDuplicateReasonsV101(item);
+          return `<button class="queue-item ${item.id === selectedReviewId ? 'active' : ''} ${reasons.length ? 'possible-duplicate-item-v101' : ''}" onclick="selectReview('${item.id}')">
+            <strong>${esc(item.first_name)} ${esc(item.last_name)}</strong>
+            <span>${titleCase(item.attendance)} · ${formatDate(item.created_at)}</span>
+            ${reviewModeV071 === 'reviewed' ? `<small>${esc(invitation?.household_name || titleCase(item.verification_status))}</small>` : ''}
+            ${duplicateBadgeV101(reasons)}
+          </button>`;
+        }).join('') : '<p class="muted queue-empty">No matching RSVPs.</p>'}</aside>
+        <section class="review-detail">${selected ? renderReviewDetailV071(selected) : '<div class="empty-state admin-empty"><h2>No response selected</h2></div>'}</section>
+      </div>`;
+  }
+
+  return `<div class="admin-view"><div class="view-heading"><div><p class="eyebrow">Guest responses</p><h1>RSVP Review</h1>
+    <p>New submissions stay separate from RSVPs you have already reviewed.</p></div></div>${tabs}${body}</div>`;
+};
+
+const baseRenderReviewDetailDuplicatesV101 = renderReviewDetailV071;
+renderReviewDetailV071 = function(rsvp) {
+  let html = baseRenderReviewDetailDuplicatesV101(rsvp);
+  const reasons = rsvpDuplicateReasonsV101(rsvp);
+  if (reasons.length) {
+    const warning = `<div class="duplicate-warning-v101"><strong>⚠ Possible duplicate</strong><span>${esc(reasons.join(' · '))}</span></div>`;
+    html = html.replace('<div class="review-details">', warning + '<div class="review-details">');
+  }
+  return html;
+};
+
+function existingRsvpPeopleForEditV101(rsvp) {
+  const existing = rsvpPeopleV071(rsvp.id);
+  if (existing.length) return existing.map(person => ({ ...person }));
+
+  if (rsvp.attendance !== 'attending') return [];
+
+  const generated = [];
+  const primaryName = `${rsvp.first_name || ''} ${rsvp.last_name || ''}`.trim();
+  const extras = String(rsvp.additional_guests || '')
+    .split(/[,;\n]+/)
+    .map(value => value.trim())
+    .filter(Boolean);
+
+  const adults = Math.max(0, Number(rsvp.adult_count || 0));
+  const children = Math.max(0, Number(rsvp.child_count || 0));
+
+  for (let i = 0; i < adults; i++) {
+    generated.push({
+      id: '',
+      person_name: i === 0 && primaryName ? primaryName : (extras.shift() || ''),
+      person_type: 'adult',
+      sort_order: i
+    });
+  }
+  for (let i = 0; i < children; i++) {
+    generated.push({
+      id: '',
+      person_name: extras.shift() || '',
+      person_type: 'child',
+      sort_order: adults + i
+    });
+  }
+  return generated;
+}
+
+function collectCurrentPeopleEditorV101() {
+  const people = [];
+  document.querySelectorAll('#rsvp-people-editor-v101 .rsvp-person-input-v101').forEach(input => {
+    people.push({
+      id: input.dataset.personId || '',
+      person_name: input.value,
+      person_type: input.dataset.personType,
+      sort_order: Number(input.dataset.sortOrder || 0)
+    });
+  });
+  return people;
+}
+
+function personValueForSlotV101(people, type, index) {
+  const sameType = people.filter(person => person.person_type === type);
+  return sameType[index] || { id: '', person_name: '' };
+}
+
+function renderRsvpPeopleFieldsV101(people, adults, children) {
+  const rows = [];
+
+  for (let i = 0; i < adults; i++) {
+    const person = personValueForSlotV101(people, 'adult', i);
+    rows.push(`<label class="field wide"><span>Adult ${i + 1} name</span>
+      <input class="rsvp-person-input-v101" name="adult_name_${i}" required
+        data-person-id="${esc(person.id || '')}" data-person-type="adult" data-sort-order="${i}"
+        value="${esc(person.person_name || '')}" placeholder="Full name">
+    </label>`);
+  }
+
+  for (let i = 0; i < children; i++) {
+    const person = personValueForSlotV101(people, 'child', i);
+    rows.push(`<label class="field wide"><span>Child ${i + 1} name</span>
+      <input class="rsvp-person-input-v101" name="child_name_${i}" required
+        data-person-id="${esc(person.id || '')}" data-person-type="child" data-sort-order="${adults + i}"
+        value="${esc(person.person_name || '')}" placeholder="Full name">
+    </label>`);
+  }
+
+  return rows.length
+    ? `<div class="rsvp-people-grid-v101">${rows.join('')}</div>`
+    : '<p class="muted">No attending people are listed for this RSVP.</p>';
+}
+
+function refreshRsvpPeopleEditorV101() {
+  const form = document.querySelector('#modal form');
+  const editor = document.getElementById('rsvp-people-editor-v101');
+  if (!form || !editor) return;
+
+  const current = collectCurrentPeopleEditorV101();
+  const attendance = form.querySelector('[name="attendance"]')?.value || 'attending';
+  const adults = attendance === 'attending' ? Math.max(0, Number(form.querySelector('[name="adult_count"]')?.value || 0)) : 0;
+  const children = attendance === 'attending' ? Math.max(0, Number(form.querySelector('[name="child_count"]')?.value || 0)) : 0;
+
+  editor.innerHTML = renderRsvpPeopleFieldsV101(current, adults, children);
+}
+
+openRsvpDialog = function(id) {
+  const item = adminData.rsvps.find(entry => entry.id === id);
+  if (!item) return;
+
+  const value = name => esc(item[name] ?? '');
+  const people = existingRsvpPeopleForEditV101(item);
+  const adults = item.attendance === 'attending' ? Math.max(0, Number(item.adult_count || 0)) : 0;
+  const children = item.attendance === 'attending' ? Math.max(0, Number(item.child_count || 0)) : 0;
+
+  document.body.insertAdjacentHTML('beforeend', `<div class="modal-backdrop" id="modal"><form class="modal-card rsvp-edit-modal-v101" onsubmit="saveRsvpEdit(event, '${id}')">
+    <div class="modal-heading"><h2>Edit RSVP</h2><button type="button" onclick="closeModal()">×</button></div>
+    <div class="form-grid">
+      ${['first_name','last_name','street_address','city','state','zip_code','phone','email'].map(name => `<label class="field ${name === 'street_address' ? 'wide' : ''}"><span>${titleCase(name)}</span><input name="${name}" ${name !== 'email' ? 'required' : ''} value="${value(name)}"></label>`).join('')}
+      <label class="field"><span>Attendance</span><select name="attendance" onchange="refreshRsvpPeopleEditorV101()"><option value="attending" ${item.attendance === 'attending' ? 'selected' : ''}>Attending</option><option value="declined" ${item.attendance === 'declined' ? 'selected' : ''}>Declined</option></select></label>
+      <label class="field"><span>Adults</span><input type="number" min="0" max="30" name="adult_count" value="${item.adult_count}" oninput="refreshRsvpPeopleEditorV101()"></label>
+      <label class="field"><span>Children</span><input type="number" min="0" max="30" name="child_count" value="${item.child_count}" oninput="refreshRsvpPeopleEditorV101()"></label>
+      <label class="field wide"><span>Notes</span><textarea name="notes" rows="4">${value('notes')}</textarea></label>
+    </div>
+
+    <section class="rsvp-people-editor-section-v101">
+      <div>
+        <h3>People on this RSVP</h3>
+        <p class="muted">Add or correct each person here. Once saved, each person can be selected individually for Wedding Jobs.</p>
+      </div>
+      <div id="rsvp-people-editor-v101">${renderRsvpPeopleFieldsV101(people, adults, children)}</div>
+    </section>
+
+    <div class="modal-actions"><button type="button" class="secondary" onclick="closeModal()">Cancel</button><button class="primary" type="submit">Save RSVP & People</button></div>
+  </form></div>`);
+};
+
+saveRsvpEdit = async function(event, id) {
+  event.preventDefault();
+  const formElement = event.target;
+  const submit = formElement.querySelector('[type="submit"]');
+  if (submit) {
+    submit.disabled = true;
+    submit.textContent = 'Saving…';
+  }
+
+  const form = new FormData(formElement);
+  const attendance = String(form.get('attendance') || 'attending');
+  const adultCount = attendance === 'attending' ? Math.max(0, Number(form.get('adult_count') || 0)) : 0;
+  const childCount = attendance === 'attending' ? Math.max(0, Number(form.get('child_count') || 0)) : 0;
+
+  const newPeople = [];
+  if (attendance === 'attending') {
+    for (let i = 0; i < adultCount; i++) {
+      const input = formElement.querySelector(`[name="adult_name_${i}"]`);
+      newPeople.push({
+        id: input?.dataset.personId || '',
+        person_name: String(input?.value || '').trim(),
+        person_type: 'adult',
+        sort_order: i
+      });
+    }
+    for (let i = 0; i < childCount; i++) {
+      const input = formElement.querySelector(`[name="child_name_${i}"]`);
+      newPeople.push({
+        id: input?.dataset.personId || '',
+        person_name: String(input?.value || '').trim(),
+        person_type: 'child',
+        sort_order: adultCount + i
+      });
+    }
+
+    if (newPeople.some(person => !person.person_name)) {
+      if (submit) {
+        submit.disabled = false;
+        submit.textContent = 'Save RSVP & People';
+      }
+      return toast('Enter a name for every adult and child on this RSVP.', 'error');
+    }
+  }
+
+  const payload = {
+    first_name: String(form.get('first_name') || '').trim(),
+    last_name: String(form.get('last_name') || '').trim(),
+    street_address: String(form.get('street_address') || '').trim(),
+    city: String(form.get('city') || '').trim(),
+    state: String(form.get('state') || '').trim(),
+    zip_code: String(form.get('zip_code') || '').trim(),
+    phone: String(form.get('phone') || '').trim(),
+    email: String(form.get('email') || '').trim() || null,
+    attendance,
+    adult_count: adultCount,
+    child_count: childCount,
+    additional_guests: newPeople.slice(1).map(person => person.person_name).join(', ') || null,
+    notes: String(form.get('notes') || '').trim() || null
+  };
+
+  const { error: rsvpError } = await db.from('rsvps').update(payload).eq('id', id);
+  if (rsvpError) {
+    if (submit) {
+      submit.disabled = false;
+      submit.textContent = 'Save RSVP & People';
+    }
+    return toast(rsvpError.message, 'error');
+  }
+
+  const existing = rsvpPeopleV071(id);
+  const existingById = new Map(existing.map(person => [person.id, person]));
+  const keptIds = new Set();
+
+  for (const person of newPeople) {
+    if (person.id && existingById.has(person.id)) {
+      keptIds.add(person.id);
+      const { error } = await db.from('rsvp_people').update({
+        person_name: person.person_name,
+        person_type: person.person_type,
+        sort_order: person.sort_order
+      }).eq('id', person.id);
+      if (error) {
+        if (submit) {
+          submit.disabled = false;
+          submit.textContent = 'Save RSVP & People';
+        }
+        return toast(`RSVP saved, but a person could not be updated: ${error.message}`, 'error');
+      }
+    } else {
+      const { error } = await db.from('rsvp_people').insert({
+        rsvp_id: id,
+        person_name: person.person_name,
+        person_type: person.person_type,
+        sort_order: person.sort_order
+      });
+      if (error) {
+        if (submit) {
+          submit.disabled = false;
+          submit.textContent = 'Save RSVP & People';
+        }
+        return toast(`RSVP saved, but a person could not be added: ${error.message}`, 'error');
+      }
+    }
+  }
+
+  const removeIds = existing.filter(person => !keptIds.has(person.id) && !newPeople.some(newPerson => newPerson.id === person.id)).map(person => person.id);
+  if (removeIds.length) {
+    const { error } = await db.from('rsvp_people').delete().in('id', removeIds);
+    if (error) {
+      if (submit) {
+        submit.disabled = false;
+        submit.textContent = 'Save RSVP & People';
+      }
+      return toast(`RSVP saved, but old person records could not be removed: ${error.message}`, 'error');
+    }
+  }
+
+  selectedReviewId = id;
+  closeModal();
+  toast('RSVP and individual people updated.');
+  await loadAdmin();
+};
+
+
+/* ===== v1.0.1 final: job/gift duplicate flags + gift quantities ===== */
+
+function jobDuplicateReasonsV101(job) {
+  const title = normalizeDuplicateTextV101(job.title);
+  const location = normalizeDuplicateTextV101(job.location);
+  if (!title) return [];
+
+  const matches = (adminData.jobs || []).filter(other => {
+    if (other.id === job.id) return false;
+    const otherTitle = normalizeDuplicateTextV101(other.title);
+    const otherLocation = normalizeDuplicateTextV101(other.location);
+    return otherTitle === title && (location === otherLocation || (!location && !otherLocation));
+  });
+
+  return matches.length ? ['same job title and location'] : [];
+}
+
+function registryDuplicateReasonsV101(item) {
+  const title = normalizeDuplicateTextV101(item.title);
+  const url = String(item.item_url || '').trim().toLowerCase();
+  const reasons = [];
+
+  const sameTitle = (adminData.registry || []).some(other =>
+    other.id !== item.id &&
+    title &&
+    normalizeDuplicateTextV101(other.title) === title
+  );
+  const sameUrl = (adminData.registry || []).some(other =>
+    other.id !== item.id &&
+    url &&
+    String(other.item_url || '').trim().toLowerCase() === url
+  );
+
+  if (sameTitle) reasons.push('same gift name');
+  if (sameUrl) reasons.push('same item link');
+  return reasons;
+}
+
+const baseRenderJobListItemDuplicatesV101 = renderJobListItem;
+renderJobListItem = function(job, active) {
+  let html = baseRenderJobListItemDuplicatesV101(job, active);
+  const reasons = jobDuplicateReasonsV101(job);
+  if (reasons.length) {
+    html = html.replace(
+      '</span>\n    <span class="job-list-count',
+      `${duplicateBadgeV101(reasons)}</span>\n    <span class="job-list-count`
+    );
+  }
+  return html;
+};
+
+const baseRenderJobDetailDuplicatesV101 = renderJobDetail;
+renderJobDetail = function(job) {
+  let html = baseRenderJobDetailDuplicatesV101(job);
+  const reasons = jobDuplicateReasonsV101(job);
+  if (reasons.length) {
+    html = html.replace(
+      '<div class="job-info-grid">',
+      `<div class="duplicate-warning-v101"><strong>⚠ Possible duplicate</strong><span>${esc(reasons.join(' · '))}</span></div><div class="job-info-grid">`
+    );
+  }
+  return html;
+};
+
+function giftQuantityV101(item) {
+  return Math.max(1, Number(item?.quantity_wanted || 1));
+}
+
+function giftClaimedQuantityV101(item) {
+  const fallback = item?.claimed_at ? 1 : 0;
+  return Math.max(0, Number(item?.claimed_quantity ?? fallback));
+}
+
+function giftRemainingV101(item) {
+  return Math.max(0, giftQuantityV101(item) - giftClaimedQuantityV101(item));
+}
+
+function activeRegistryClaimsV101(itemId) {
+  return (adminData.registryClaims || [])
+    .filter(claim => claim.registry_item_id === itemId && !claim.released_at)
+    .sort((a, b) => String(a.created_at || '').localeCompare(String(b.created_at || '')));
+}
+
+renderPublicRegistryItemV071 = function(item) {
+  const imageUrl = safeUrl(item.image_url);
+  const exampleUrl = safeUrl(item.item_url);
+  const wanted = giftQuantityV101(item);
+  const claimed = giftClaimedQuantityV101(item);
+  const remaining = giftRemainingV101(item);
+  const full = remaining <= 0;
+
+  return `<article class="public-registry-card registry-claim-card-v071 ${full ? 'claimed' : 'available'}">
+    ${imageUrl ? `<div class="registry-image-wrap"><img src="${esc(imageUrl)}" alt="${esc(item.title)}" loading="lazy" onerror="this.parentElement.classList.add('image-failed');this.remove()"></div>` : `<div class="registry-image-wrap registry-image-placeholder">🎁</div>`}
+    <div class="public-registry-copy">
+      <div class="registry-card-status-v071">
+        ${full
+          ? '<span class="gift-claimed-v071">Fully Claimed</span>'
+          : `<span class="gift-available-v071">${remaining} of ${wanted} available</span>`}
+      </div>
+      ${item.store_name ? `<p class="registry-store">Suggested: ${esc(item.store_name)}</p>` : ''}
+      <h3>${esc(item.title)}</h3>
+      ${item.description ? `<p>${esc(item.description)}</p>` : ''}
+      ${wanted > 1 ? `<p class="gift-quantity-note-v101"><strong>Quantity wanted:</strong> ${wanted} · <strong>Claimed:</strong> ${claimed}</p>` : ''}
+      ${full
+        ? `<div class="claimed-message-v071"><strong>All requested quantities are covered.</strong><span>Thank you!</span></div>`
+        : `<button class="primary" onclick="openGiftClaimV071('${item.id}')">I'll Take One</button>`}
+      ${exampleUrl ? `<a class="registry-example-link-v071" href="${esc(exampleUrl)}" target="_blank" rel="noopener">View example / idea ↗</a>` : ''}
+    </div>
+  </article>`;
+};
+
+openGiftClaimV071 = function(itemId) {
+  const item = publicRegistry.find(i => i.id === itemId);
+  if (!item || giftRemainingV101(item) <= 0) return;
+
+  const remaining = giftRemainingV101(item);
+  document.body.insertAdjacentHTML('beforeend', `<div class="modal-backdrop guest-claim-modal-v071" id="modal"><form class="modal-card" onsubmit="saveGiftClaimV071(event,'${item.id}')">
+    <div class="modal-heading"><div><p class="eyebrow">Claim a gift</p><h2>${esc(item.title)}</h2></div><button type="button" onclick="closeModal()">×</button></div>
+    <p>You are claiming <strong>one</strong> of this gift. ${remaining} ${remaining === 1 ? 'is' : 'are'} currently available. You can buy it wherever you like.</p>
+    <div class="form-grid">
+      <label class="field wide"><span>Your name</span><input name="claimant_name" required maxlength="120" autocomplete="name" placeholder="Your name"></label>
+      <label class="field wide"><span>Email (optional)</span><input type="email" name="claimant_email" maxlength="254" autocomplete="email" placeholder="For a confirmation and release link"></label>
+    </div>
+    <p class="muted">Your name and email are private and only visible to Jordan and Rochelle. Other guests only see how many are still available.</p>
+    <div class="modal-actions"><button type="button" class="secondary" onclick="closeModal()">Cancel</button><button class="primary" type="submit">I'll Take One</button></div>
+  </form></div>`);
+};
+
+saveGiftClaimV071 = async function(event, itemId) {
+  event.preventDefault();
+  const form = new FormData(event.target);
+  const name = String(form.get('claimant_name') || '').trim();
+  const email = String(form.get('claimant_email') || '').trim() || null;
+  const button = event.submitter;
+  if (!name) return;
+  if (button) { button.disabled = true; button.textContent = 'Claiming…'; }
+
+  const { data, error } = await db.rpc('claim_registry_item', {
+    p_item_id: itemId,
+    p_name: name,
+    p_email: email
+  });
+  const result = Array.isArray(data) ? data[0] : data;
+
+  if (error || !result?.success) {
+    if (button) { button.disabled = false; button.textContent = "I'll Take One"; }
+    const message = error?.message || result?.message || 'This gift could not be claimed.';
+    await loadPublicRegistry();
+    return toast(message, 'error');
+  }
+
+  const item = publicRegistry.find(i => i.id === itemId);
+  if (item) {
+    item.claimed_quantity = giftClaimedQuantityV101(item) + 1;
+    item.claimed_at = giftRemainingV101(item) <= 0 ? new Date().toISOString() : null;
+  }
+
+  let emailMessage = '';
+  if (email && result.claim_token) {
+    try {
+      const { error: emailError } = await db.functions.invoke('send-gift-claim-confirmation', {
+        body: { claim_token: result.claim_token }
+      });
+      emailMessage = emailError
+        ? '<p class="muted">Your gift is claimed, but the confirmation email could not be sent. Contact Jordan or Rochelle if you need to release it.</p>'
+        : `<p>We sent a confirmation to <strong>${esc(email)}</strong> with a private release link.</p>`;
+    } catch {
+      emailMessage = '<p class="muted">Your gift is claimed, but the confirmation email could not be sent. Contact Jordan or Rochelle if you need to release it.</p>';
+    }
+  } else {
+    emailMessage = '<p>If you change your mind, contact Jordan or Rochelle and they can release your claim.</p>';
+  }
+
+  const remaining = item ? giftRemainingV101(item) : null;
+  const modal = document.getElementById('modal');
+  if (modal) modal.innerHTML = `<div class="modal-card gift-claim-success-v071"><div class="big-icon">♥</div><h2>Thank you, ${esc(name)}!</h2>
+    <p>You claimed one <strong>${esc(result.gift_title || item?.title || 'gift')}</strong>.</p>
+    ${remaining !== null ? `<p>${remaining ? `${remaining} still available.` : 'All requested quantities are now covered.'}</p>` : ''}
+    ${emailMessage}<button class="primary" onclick="closeModal();render()">Done</button></div>`;
+};
+
+const baseOpenRegistryDialogQuantityV101 = openRegistryDialog;
+openRegistryDialog = function(id = '') {
+  baseOpenRegistryDialogQuantityV101(id);
+  const item = id ? adminData.registry.find(entry => entry.id === id) : null;
+  const sortField = document.querySelector('#modal input[name="sort_order"]')?.closest('.field');
+  if (sortField && !document.querySelector('#modal input[name="quantity_wanted"]')) {
+    sortField.insertAdjacentHTML(
+      'afterend',
+      `<label class="field"><span>Quantity wanted</span><input type="number" name="quantity_wanted" min="1" max="100" step="1" required value="${giftQuantityV101(item)}"><small>Guests claim one at a time.</small></label>`
+    );
+  }
+};
+
+saveRegistryItem = async function(event) {
+  event.preventDefault();
+  const form = new FormData(event.target);
+  const id = String(form.get('registry_id') || '');
+  const itemUrl = String(form.get('item_url') || '').trim();
+  const imageUrl = String(form.get('image_url') || '').trim();
+
+  if (itemUrl && !safeUrl(itemUrl)) return toast('The store link must start with http:// or https://.', 'error');
+  if (imageUrl && !safeUrl(imageUrl)) return toast('The image link must start with http:// or https://.', 'error');
+
+  const quantityWanted = Math.max(1, Number(form.get('quantity_wanted') || 1));
+  const existing = id ? adminData.registry.find(item => item.id === id) : null;
+  const alreadyClaimed = giftClaimedQuantityV101(existing);
+
+  if (quantityWanted < alreadyClaimed) {
+    return toast(`Quantity wanted cannot be lower than the ${alreadyClaimed} already claimed. Release claims first.`, 'error');
+  }
+
+  const payload = {
+    title: String(form.get('title') || '').trim(),
+    description: String(form.get('description') || '').trim() || null,
+    store_name: String(form.get('store_name') || '').trim() || null,
+    item_url: itemUrl || null,
+    image_url: imageUrl || null,
+    is_active: form.get('is_active') === 'on',
+    sort_order: Math.max(0, Number(form.get('sort_order') || 0)),
+    quantity_wanted: quantityWanted
+  };
+
+  const result = id
+    ? await db.from('registry_items').update(payload).eq('id', id)
+    : await db.from('registry_items').insert(payload).select('id').single();
+
+  if (result.error) return toast(result.error.message, 'error');
+  if (!id && result.data?.id) selectedRegistryId = result.data.id;
+  closeModal();
+  toast(id ? 'Registry item updated.' : 'Registry item added.');
+  await loadAdmin();
+};
+
+importGiftListV062 = async function(event) {
+  const file = event.target.files?.[0];
+  event.target.value = '';
+  if (!file) return;
+
+  try {
+    const XLSX = await ensureXlsxV063();
+    const wb = XLSX.read(await file.arrayBuffer(), { type: 'array' });
+    const rows = XLSX.utils.sheet_to_json(wb.Sheets[wb.SheetNames[0]], { defval: '' });
+    const start = registryItemsSorted().length * 10 + 10;
+
+    const items = rows.map((row, i) => {
+      const keys = Object.fromEntries(
+        Object.entries(row).map(([key, value]) => [key.toLowerCase().replace(/[^a-z0-9]/g, ''), value])
+      );
+      return {
+        title: String(keys.title || keys.gift || keys.item || '').trim(),
+        description: String(keys.description || '').trim() || null,
+        store_name: String(keys.store || keys.storename || '').trim() || null,
+        item_url: String(keys.url || keys.link || keys.itemurl || '').trim() || null,
+        image_url: String(keys.image || keys.imageurl || '').trim() || null,
+        quantity_wanted: Math.max(1, Number(keys.quantity || keys.qty || keys.quantitywanted || 1) || 1),
+        is_active: true,
+        sort_order: start + i * 10
+      };
+    }).filter(item => item.title);
+
+    if (!items.length) return toast('Your gift list needs a Title, Gift, or Item column.', 'error');
+    if (!confirm(`Import ${items.length} gift items? A Quantity column is optional.`)) return;
+
+    const { error } = await db.from('registry_items').insert(items);
+    if (error) return toast(error.message, 'error');
+    toast(`${items.length} gifts imported.`);
+    await loadAdmin();
+  } catch (error) {
+    toast(`Could not read gift list: ${error.message}`, 'error');
+  }
+};
+
+renderRegistryListItemV071 = function(item, active) {
+  const claims = activeRegistryClaimsV101(item.id);
+  const remaining = giftRemainingV101(item);
+  const wanted = giftQuantityV101(item);
+  const reasons = registryDuplicateReasonsV101(item);
+  const status = !item.is_active ? 'Hidden' : (remaining <= 0 ? 'Fully Claimed' : `${remaining}/${wanted} Available`);
+  const cls = !item.is_active ? 'hidden' : (remaining <= 0 ? 'claimed' : 'visible');
+
+  return `<button class="registry-list-item ${active ? 'active' : ''} ${reasons.length ? 'possible-duplicate-item-v101' : ''}" onclick="selectRegistryItem('${item.id}')">
+    <span class="registry-list-copy"><strong>${esc(item.title)}</strong><small>${claims.length ? `${claims.length} claimed · ${remaining} remaining` : esc(item.store_name || 'Buy anywhere')}</small>${duplicateBadgeV101(reasons)}</span>
+    <span class="registry-visibility ${cls}">${status}</span></button>`;
+};
+
+renderRegistryPreviewV071 = function(item) {
+  const image = safeUrl(item.image_url);
+  const remaining = giftRemainingV101(item);
+  return `<article class="registry-preview-card ${remaining <= 0 ? 'claimed' : ''}">
+    ${image ? `<img src="${esc(image)}" alt="${esc(item.title)}" loading="lazy">` : '<div class="registry-preview-placeholder">🎁</div>'}
+    <div><strong>${esc(item.title)}</strong><span>${remaining <= 0 ? 'Fully claimed' : `${remaining} of ${giftQuantityV101(item)} available`}</span></div></article>`;
+};
+
+renderRegistryDetailV071 = function(item, all) {
+  const index = all.findIndex(entry => entry.id === item.id);
+  const itemUrl = safeUrl(item.item_url);
+  const imageUrl = safeUrl(item.image_url);
+  const claims = activeRegistryClaimsV101(item.id);
+  const wanted = giftQuantityV101(item);
+  const claimed = giftClaimedQuantityV101(item);
+  const remaining = giftRemainingV101(item);
+  const reasons = registryDuplicateReasonsV101(item);
+
+  return `<article class="registry-detail-card">
+    <div class="registry-detail-header"><div><p class="eyebrow">Gift item</p><h2>${esc(item.title)}</h2>
+      <div class="profile-pills"><span class="registry-visibility ${!item.is_active ? 'hidden' : (remaining <= 0 ? 'claimed' : 'visible')}">${!item.is_active ? 'Hidden' : (remaining <= 0 ? 'Fully Claimed' : `${remaining} Available`)}</span></div></div>
+      <div class="profile-actions"><button class="secondary" onclick="openRegistryDialog('${item.id}')">Edit</button><button class="danger-button" onclick="deleteRegistryItem('${item.id}')">Delete</button></div></div>
+    ${reasons.length ? `<div class="duplicate-warning-v101"><strong>⚠ Possible duplicate</strong><span>${esc(reasons.join(' · '))}</span></div>` : ''}
+    <div class="registry-detail-body"><div class="registry-detail-image">${imageUrl ? `<img src="${esc(imageUrl)}" alt="${esc(item.title)}">` : '<div class="registry-large-placeholder">🎁</div>'}</div>
+      <div><div class="profile-info-grid registry-info-grid">
+        <div class="profile-info"><span>Suggested store</span><strong>${esc(item.store_name || 'Buy anywhere')}</strong></div>
+        <div class="profile-info"><span>Quantity wanted</span><strong>${wanted}</strong></div>
+        <div class="profile-info"><span>Claimed</span><strong>${claimed}</strong></div>
+        <div class="profile-info"><span>Still available</span><strong>${remaining}</strong></div>
+        <div class="profile-info"><span>Guest order</span><strong>${index + 1} of ${all.length}</strong></div>
+        <div class="profile-info"><span>Visibility</span><strong>${item.is_active ? 'Shown to guests' : 'Hidden from guests'}</strong></div>
+        <div class="profile-info"><span>Example link</span><strong>${itemUrl ? `<a href="${esc(itemUrl)}" target="_blank" rel="noopener">Open example ↗</a>` : '—'}</strong></div>
+      </div>
+      ${item.description ? `<section class="profile-section"><h3>Description</h3><p class="job-description">${esc(item.description)}</p></section>` : ''}
+      ${claims.length ? `<section class="profile-section registry-claim-admin-v071"><div class="panel-heading"><div><h3>Active Claims</h3><p class="muted">Claimant information is private.</p></div></div>
+        <div class="gift-claim-list-v101">${claims.map((claim, claimIndex) => `<div class="gift-claim-row-v101">
+          <div><strong>${esc(claim.claimant_name)}</strong><span>${esc(claim.claimant_email || 'No email')} · ${formatDate(claim.created_at)}</span></div>
+          <button class="secondary" onclick="releaseRegistryClaimByIdV101('${claim.id}')">Release This Claim</button>
+        </div>`).join('')}</div></section>` : ''}
+      <section class="profile-section"><div class="registry-action-grid"><button class="secondary" onclick="toggleRegistryVisibility('${item.id}')">${item.is_active ? 'Hide from Guests' : 'Show to Guests'}</button>
+        <button class="secondary" onclick="moveRegistryItem('${item.id}',-1)" ${index <= 0 ? 'disabled' : ''}>Move Up</button>
+        <button class="secondary" onclick="moveRegistryItem('${item.id}',1)" ${index >= all.length - 1 ? 'disabled' : ''}>Move Down</button></div></section>
+      </div></div>
+  </article>`;
+};
+
+renderRegistryManagerV071 = function() {
+  const all = registryItemsSorted();
+  const query = registrySearch.trim().toLowerCase();
+  const filtered = query ? all.filter(item => {
+    const claims = activeRegistryClaimsV101(item.id);
+    return [item.title, item.description, item.store_name, item.item_url, ...claims.flatMap(c => [c.claimant_name, c.claimant_email])]
+      .some(value => String(value || '').toLowerCase().includes(query));
+  }) : all;
+
+  const totalUnits = all.filter(item => item.is_active).reduce((sum, item) => sum + giftQuantityV101(item), 0);
+  const claimedUnits = all.filter(item => item.is_active).reduce((sum, item) => sum + giftClaimedQuantityV101(item), 0);
+  const availableUnits = Math.max(0, totalUnits - claimedUnits);
+
+  let selected = filtered.find(item => item.id === selectedRegistryId) || null;
+  if (!selected && filtered.length) {
+    selected = filtered[0];
+    selectedRegistryId = selected.id;
+  }
+
+  return `<div class="admin-view">
+    <div class="view-heading"><div><p class="eyebrow">Gift choices</p><h1>Registry Manager</h1><p>Guests claim one unit at a time and can buy it wherever they prefer.</p></div>
+      <div class="heading-actions"><button class="secondary" onclick="document.getElementById('gift-import').click()">Import Gift List</button><input id="gift-import" hidden type="file" accept=".xlsx,.xls,.csv" onchange="importGiftListV062(event)"><button class="primary" onclick="openRegistryDialog()">Add Gift</button></div></div>
+    <section class="registry-metric-grid">${metricCard('Gift ideas', all.length, 'Different items')}${metricCard('Wanted', totalUnits, 'Total gift units')}${metricCard('Claimed', claimedUnits, 'Units chosen')}${metricCard('Available', availableUnits, 'Units still open')}</section>
+    <div class="registry-toolbar"><input id="registry-search" type="search" value="${esc(registrySearch)}" placeholder="Search gifts or guest claims" oninput="setRegistrySearch(this.value)"><span>${filtered.length} item${filtered.length === 1 ? '' : 's'}</span></div>
+    <div class="registry-split">
+      <aside class="registry-list">${filtered.length ? filtered.map(item => renderRegistryListItemV071(item, selected?.id === item.id)).join('') : '<p class="muted registry-empty">No matching gifts.</p>'}</aside>
+      <section class="registry-detail">${selected ? renderRegistryDetailV071(selected, all) : `<div class="empty-state admin-empty"><div class="big-icon">🎁</div><h2>No gifts yet</h2><p>Add or import your first gift idea.</p><button class="primary" onclick="openRegistryDialog()">Add Gift</button></div>`}</section>
+    </div>
+    ${all.length ? `<section class="admin-panel registry-preview-panel"><div class="panel-heading"><div><h2>Guest preview</h2><p class="muted">Guests see how many of each gift are still available.</p></div></div>
+      <div class="registry-preview-grid">${all.filter(i => i.is_active).map(renderRegistryPreviewV071).join('') || '<p class="muted">No gifts are visible to guests.</p>'}</div></section>` : ''}
+  </div>`;
+};
+
+async function releaseRegistryClaimByIdV101(claimId) {
+  const claim = (adminData.registryClaims || []).find(c => c.id === claimId);
+  if (!claim) return;
+  if (!confirm(`Release ${claim.claimant_name}'s claim? One unit will become available again.`)) return;
+
+  const { error } = await db.rpc('admin_release_registry_claim', { p_claim_id: claimId });
+  if (error) return toast(error.message, 'error');
+
+  toast('Gift claim released.');
+  await loadAdmin();
+};
+
+// Wedding Summary: quantity-aware registry availability.
+const baseSummaryMetricsQuantitiesV101 = summaryMetricsV080;
+summaryMetricsV080 = function() {
+  const metrics = baseSummaryMetricsQuantitiesV101();
+  const visible = (adminData.registry || []).filter(item => item.is_active);
+  metrics.availableGifts = visible.filter(item => giftRemainingV101(item) > 0);
+  metrics.claimedGifts = visible.filter(item => giftClaimedQuantityV101(item) > 0);
+  return metrics;
+};
+

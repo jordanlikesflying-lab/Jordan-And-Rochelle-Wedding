@@ -1,0 +1,17 @@
+v1.0.1 FINAL UPDATE PACKAGE
+
+Use this ZIP instead of both earlier v1.0.1 packages.
+
+ONE SQL FILE TO RUN:
+v1.0.1-invitation-people.sql
+
+That single migration now includes:
+- invitation household -> individual people
+- gift quantity support
+- safe multiple gift claims
+- individual admin claim release
+
+Website changes include:
+- duplicate flags in Invite List, RSVP Review, Guest Profiles, Wedding Jobs, and Gift Registry
+- old RSVP individual-person editor
+- quantity-aware guest registry and Command Center
