@@ -29,3 +29,18 @@
   Referrer-Policy: no-referrer
   Cache-Control: no-store
 
+/manifest.webmanifest
+  Content-Type: application/manifest+json
+  Cache-Control: public, max-age=0, must-revalidate
+
+/command-center.webmanifest
+  Content-Type: application/manifest+json
+  Cache-Control: public, max-age=0, must-revalidate
+
+/sw.js
+  Cache-Control: no-cache, no-store, must-revalidate
+  Service-Worker-Allowed: /
+
+/icons/*
+  Cache-Control: public, max-age=604800
+

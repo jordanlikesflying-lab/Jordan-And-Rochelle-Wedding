@@ -1,0 +1,7 @@
+Jordan & Rochelle Wedding Manager v0.9.2
+
+NO SUPABASE SQL CHANGES ARE REQUIRED.
+
+This release makes the website installable on a phone like an app.
+Deploy all files to GitHub/main and let Netlify deploy.
+Then open the Command Center on the phone and use Add to Home Screen / Install App.

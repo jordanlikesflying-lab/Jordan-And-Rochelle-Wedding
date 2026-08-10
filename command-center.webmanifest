@@ -1,0 +1,25 @@
+{
+  "id": "/command-center.html",
+  "name": "Wedding Command Center",
+  "short_name": "Wedding Center",
+  "description": "Jordan and Rochelle's private wedding command center",
+  "start_url": "/command-center.html",
+  "scope": "/",
+  "display": "standalone",
+  "background_color": "#fffaf6",
+  "theme_color": "#fffaf6",
+  "icons": [
+    {
+      "src": "/icons/wedding-192.png",
+      "sizes": "192x192",
+      "type": "image/png",
+      "purpose": "any maskable"
+    },
+    {
+      "src": "/icons/wedding-512.png",
+      "sizes": "512x512",
+      "type": "image/png",
+      "purpose": "any maskable"
+    }
+  ]
+}

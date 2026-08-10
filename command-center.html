@@ -3,16 +3,33 @@
 <head>
   <meta charset="UTF-8">
   <meta name="viewport" content="width=device-width,initial-scale=1">
+  <meta name="theme-color" content="#fffaf6">
+  <meta name="mobile-web-app-capable" content="yes">
+  <meta name="apple-mobile-web-app-capable" content="yes">
+  <meta name="apple-mobile-web-app-status-bar-style" content="default">
+  <meta name="apple-mobile-web-app-title" content="Wedding Center">
+  <link rel="manifest" href="/command-center.webmanifest">
+  <link rel="apple-touch-icon" sizes="180x180" href="/icons/wedding-180.png">
+  <link rel="icon" type="image/png" sizes="64x64" href="/icons/favicon-64.png">
   <meta name="robots" content="noindex,nofollow,noarchive">
   <meta name="description" content="Private Jordan and Rochelle wedding administration">
   <title>Wedding Command Center</title>
-  <link rel="stylesheet" href="styles.css?v=0.9.1">
+  <link rel="stylesheet" href="styles.css?v=0.9.2">
   <script src="https://cdn.jsdelivr.net/npm/@supabase/supabase-js@2"></script>
-  <script src="config.js?v=0.9.1"></script>
+  <script src="config.js?v=0.9.2"></script>
   <script src="https://cdn.sheetjs.com/xlsx-0.20.3/package/dist/xlsx.full.min.js"></script>
 </head>
 <body>
   <div id="app"></div>
-  <script src="app.js?v=0.9.1"></script>
+  <script src="app.js?v=0.9.2"></script>
+
+  <script>
+    if ('serviceWorker' in navigator) {
+      window.addEventListener('load', () => {
+        navigator.serviceWorker.register('/sw.js').catch(error => console.warn('Service worker registration failed:', error));
+      });
+    }
+  </script>
+
 </body>
 </html>

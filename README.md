@@ -199,3 +199,16 @@ Fixes public RSVP submission failing with:
 `new row violates row-level security policy for table "rsvps"`
 
 The guest RSVP form now uses the existing `submit_public_rsvp` database RPC instead of attempting a direct insert into the protected RSVP table. Named attendee rows are still stored in `rsvp_people`, and RSVP confirmation email behavior is unchanged.
+
+
+## v0.9.2 — Installable Phone App
+
+No SQL migration is required.
+
+- Public wedding site can be added to a phone home screen.
+- Wedding Command Center can be installed separately from its own page and reopens directly to the private Command Center.
+- Standalone app-style display.
+- Custom Jordan & Rochelle home-screen icon.
+- iPhone/iPad Apple touch icon support.
+- Android/Chrome manifest and service-worker support.
+- Network-first service worker to avoid stale deployed files.
