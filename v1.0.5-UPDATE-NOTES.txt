@@ -1,0 +1,14 @@
+Jordan & Rochelle Wedding Manager v1.0.5
+
+RUN THIS SQL FIRST:
+v1.0.5-household-people-and-duplicate-review.sql
+
+Changes:
+- duplicate invitation warnings can be reviewed and marked Not a duplicate
+- Not-a-duplicate decisions persist in Supabase across devices/reloads
+- Edit Invitation now edits every individual household member
+- add adults and children to a family invitation
+- remove individual household members
+- edit the second/third/etc. person independently
+- first adult in the list becomes the invitation primary contact name
+- household label remains separately editable

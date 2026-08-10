@@ -5698,3 +5698,451 @@ invitationDuplicateReasonsV101 = function(invitation) {
   return [...new Set(reasons)];
 };
 
+
+/* ===== v1.0.5 Household People Editor + Duplicate Review ===== */
+
+function duplicatePairKeyV105(type, leftId, rightId) {
+  const ids = [String(leftId || ''), String(rightId || '')].sort();
+  return `${type}:${ids[0]}:${ids[1]}`;
+}
+
+function duplicatePairDismissedV105(type, leftId, rightId) {
+  const key = duplicatePairKeyV105(type, leftId, rightId);
+  return (adminData.duplicateDismissals || []).some(row =>
+    duplicatePairKeyV105(row.entity_type, row.left_id, row.right_id) === key
+  );
+}
+
+const baseLoadAdminV105 = loadAdmin;
+loadAdmin = async function() {
+  await baseLoadAdminV105();
+  if (!db || !session) return;
+
+  const { data, error } = await db
+    .from('duplicate_dismissals')
+    .select('*')
+    .order('created_at', { ascending: false });
+
+  if (!error) adminData.duplicateDismissals = data || [];
+  render();
+};
+
+function invitationDuplicateMatchesV105(invitation) {
+  const matches = [];
+  const myNames = new Set(invitationPersonNamesForDuplicatesV104(invitation));
+  const household = normalizeDuplicateTextV101(invitation.household_name);
+  const email = normalizeDuplicateTextV101(invitation.email);
+  const phone = normalizePhoneV101(invitation.phone);
+
+  (adminData.invitations || [])
+    .filter(other => other.id !== invitation.id && other.status !== 'cancelled')
+    .forEach(other => {
+      if (duplicatePairDismissedV105('invitation', invitation.id, other.id)) return;
+
+      const reasons = [];
+      const otherNames = new Set(invitationPersonNamesForDuplicatesV104(other));
+      const samePeople = [...myNames].filter(name => otherNames.has(name));
+
+      if (samePeople.length) reasons.push(`same person: ${samePeople.join(', ')}`);
+      if (household && normalizeDuplicateTextV101(other.household_name) === household) reasons.push('same household name');
+      if (email && normalizeDuplicateTextV101(other.email) === email) reasons.push('same email');
+      if (phone.length >= 7 && normalizePhoneV101(other.phone) === phone) reasons.push('same phone');
+
+      if (reasons.length) {
+        matches.push({
+          id: other.id,
+          label: other.household_name || `${other.primary_first_name || ''} ${other.primary_last_name || ''}`.trim(),
+          reasons
+        });
+      }
+    });
+
+  return matches;
+}
+
+invitationDuplicateReasonsV101 = function(invitation) {
+  return [...new Set(invitationDuplicateMatchesV105(invitation).flatMap(match => match.reasons))];
+};
+
+function openDuplicateReviewV105(invitationId) {
+  const invitation = (adminData.invitations || []).find(item => item.id === invitationId);
+  if (!invitation) return;
+
+  const matches = invitationDuplicateMatchesV105(invitation);
+
+  document.body.insertAdjacentHTML('beforeend', `<div class="modal-backdrop" id="modal">
+    <div class="modal-card duplicate-review-modal-v105">
+      <div class="modal-heading">
+        <div><p class="eyebrow">Duplicate review</p><h2>${esc(invitation.household_name)}</h2></div>
+        <button type="button" onclick="closeModal()">×</button>
+      </div>
+
+      ${matches.length ? `<p>These records look similar. If two records are actually different people or households, mark them <strong>Not a duplicate</strong>.</p>
+        <div class="duplicate-review-list-v105">
+          ${matches.map(match => `<article>
+            <div>
+              <strong>${esc(match.label)}</strong>
+              <span>${esc(match.reasons.join(' · '))}</span>
+            </div>
+            <button class="secondary" onclick="dismissInvitationDuplicateV105('${invitation.id}','${match.id}')">Not a duplicate</button>
+          </article>`).join('')}
+        </div>`
+        : '<div class="empty-state"><h3>No active duplicate warnings</h3><p>This invitation has no unresolved duplicate matches.</p></div>'}
+
+      <div class="modal-actions"><button class="primary" type="button" onclick="closeModal()">Done</button></div>
+    </div>
+  </div>`);
+}
+
+async function dismissInvitationDuplicateV105(leftId, rightId) {
+  if (!confirm('Confirm these are NOT duplicates? This warning will stay dismissed.')) return;
+
+  const { error } = await db.rpc('dismiss_duplicate_pair', {
+    p_entity_type: 'invitation',
+    p_left_id: leftId,
+    p_right_id: rightId
+  });
+
+  if (error) return toast(error.message, 'error');
+
+  toast('Marked as not a duplicate.');
+  closeModal();
+  await loadAdmin();
+}
+
+function invitationDuplicateActionV105(item) {
+  const matches = invitationDuplicateMatchesV105(item);
+  if (!matches.length) return '';
+  return `<button class="duplicate-review-button-v105" onclick="openDuplicateReviewV105('${item.id}')">Review duplicate</button>`;
+}
+
+invitationTable = function(items) {
+  if (!items.length) return '<p class="muted">No invitations found.</p>';
+
+  return `<div class="table-wrap"><table>
+    <thead><tr>
+      <th>Household</th>
+      <th>Primary contact</th>
+      <th>Contact</th>
+      <th>Allowed</th>
+      <th>Status</th>
+      <th>Actions</th>
+    </tr></thead>
+    <tbody>
+      ${items.map(item => {
+        const reasons = invitationDuplicateReasonsV101(item);
+        return `<tr class="${reasons.length ? 'possible-duplicate-row-v101' : ''}">
+          <td>
+            <strong>${esc(item.household_name)}</strong>
+            ${duplicateBadgeV101(reasons)}
+            ${invitationDuplicateActionV105(item)}
+            <br><small>${esc([item.city, item.state].filter(Boolean).join(', '))}</small>
+          </td>
+          <td>${esc(item.primary_first_name)} ${esc(item.primary_last_name)}</td>
+          <td>${esc(item.phone || item.email || '—')}</td>
+          <td>${item.max_guests}</td>
+          <td>${statusPill(item.status)}</td>
+          <td>
+            <div class="table-actions">
+              <button onclick="openGuestByInvitation('${item.id}')">Profile</button>
+              <button onclick="openInvitationDialog('${item.id}')">Edit</button>
+              <button class="danger-text" onclick="deleteInvitation('${item.id}')">Delete</button>
+            </div>
+          </td>
+        </tr>`;
+      }).join('')}
+    </tbody>
+  </table></div>`;
+};
+
+// ------------------------------------------------------------
+// Invitation household people editor
+// ------------------------------------------------------------
+
+function invitationPeopleForEditV105(invitation) {
+  if (!invitation) return [];
+
+  const stored = invitationPeopleV101(invitation.id);
+  if (stored.length) {
+    return stored.map(person => ({
+      id: person.id,
+      person_name: person.person_name,
+      person_type: person.person_type || 'adult',
+      sort_order: Number(person.sort_order || 0)
+    }));
+  }
+
+  return parseInvitationPeopleV101(
+    invitation.household_name,
+    invitation.primary_first_name,
+    invitation.primary_last_name
+  ).map((name, index) => ({
+    id: '',
+    person_name: name,
+    person_type: 'adult',
+    sort_order: index
+  }));
+}
+
+function invitationPersonRowV105(person = {}, index = 0) {
+  return `<div class="invitation-person-row-v105" data-person-id="${esc(person.id || '')}">
+    <label class="field">
+      <span>Person ${index + 1}</span>
+      <input name="invite_person_name" required value="${esc(person.person_name || '')}" placeholder="Full name">
+    </label>
+    <label class="field invitation-person-type-v105">
+      <span>Type</span>
+      <select name="invite_person_type">
+        <option value="adult" ${(person.person_type || 'adult') === 'adult' ? 'selected' : ''}>Adult</option>
+        <option value="child" ${person.person_type === 'child' ? 'selected' : ''}>Child</option>
+      </select>
+    </label>
+    <button class="danger-text invitation-person-remove-v105" type="button" onclick="removeInvitationPersonRowV105(this)">Remove</button>
+  </div>`;
+}
+
+function renumberInvitationPeopleV105() {
+  document.querySelectorAll('#invitation-people-editor-v105 .invitation-person-row-v105').forEach((row, index) => {
+    const label = row.querySelector('.field span');
+    if (label) label.textContent = `Person ${index + 1}`;
+  });
+}
+
+function addInvitationPersonRowV105(type = 'adult') {
+  const editor = document.getElementById('invitation-people-editor-v105');
+  if (!editor) return;
+  const index = editor.querySelectorAll('.invitation-person-row-v105').length;
+  editor.insertAdjacentHTML('beforeend', invitationPersonRowV105({ person_type: type }, index));
+}
+
+function removeInvitationPersonRowV105(button) {
+  const editor = document.getElementById('invitation-people-editor-v105');
+  if (!editor) return;
+
+  const rows = editor.querySelectorAll('.invitation-person-row-v105');
+  if (rows.length <= 1) return toast('An invitation needs at least one named person.', 'error');
+
+  button.closest('.invitation-person-row-v105')?.remove();
+  renumberInvitationPeopleV105();
+}
+
+function collectInvitationPeopleV105(form) {
+  return [...form.querySelectorAll('#invitation-people-editor-v105 .invitation-person-row-v105')].map((row, index) => ({
+    id: row.dataset.personId || '',
+    person_name: String(row.querySelector('[name="invite_person_name"]')?.value || '').trim(),
+    person_type: String(row.querySelector('[name="invite_person_type"]')?.value || 'adult'),
+    sort_order: index
+  }));
+}
+
+function splitNameForPrimaryV105(fullName) {
+  const parts = String(fullName || '').trim().split(/\s+/).filter(Boolean);
+  if (!parts.length) return { first: '', last: '' };
+  if (parts.length === 1) return { first: parts[0], last: '' };
+  return {
+    first: parts.slice(0, -1).join(' '),
+    last: parts[parts.length - 1]
+  };
+}
+
+openInvitationDialog = function(id = null) {
+  const item = id ? adminData.invitations.find(entry => entry.id === id) : null;
+  const value = name => esc(item?.[name] ?? '');
+  let people = invitationPeopleForEditV105(item);
+
+  if (!people.length) {
+    const initial = item
+      ? `${item.primary_first_name || ''} ${item.primary_last_name || ''}`.trim()
+      : '';
+    people = [{ id: '', person_name: initial, person_type: 'adult', sort_order: 0 }];
+  }
+
+  document.body.insertAdjacentHTML('beforeend', `<div class="modal-backdrop" id="modal">
+    <form class="modal-card invitation-edit-modal-v105" onsubmit="saveInvitation(event, '${id || ''}')">
+      <div class="modal-heading"><h2>${item ? 'Edit' : 'Add'} Invitation</h2><button type="button" onclick="closeModal()">×</button></div>
+
+      <div class="form-grid">
+        <label class="field wide">
+          <span>Household name</span>
+          <input name="household_name" required value="${value('household_name')}" placeholder="Example: John and Joe Weaver">
+          <small>This is how the household is labeled. Individual people are managed below.</small>
+        </label>
+
+        <label class="field"><span>Maximum guests</span><input type="number" name="max_guests" min="1" max="50" required value="${item?.max_guests ?? Math.max(1, people.length)}"></label>
+        <label class="field"><span>Status</span><select name="status">${['invited','responded','declined','cancelled'].map(status => `<option value="${status}" ${item?.status === status ? 'selected' : ''}>${titleCase(status)}</option>`).join('')}</select></label>
+
+        ${['phone','email','street_address','city','state','zip_code'].map(name => `<label class="field ${name === 'street_address' ? 'wide' : ''}"><span>${titleCase(name)}</span><input name="${name}" value="${value(name)}"></label>`).join('')}
+
+        <label class="field wide"><span>Private notes</span><textarea name="private_notes" rows="4">${value('private_notes')}</textarea></label>
+      </div>
+
+      <section class="invitation-people-editor-section-v105">
+        <div class="profile-section-heading">
+          <div>
+            <h3>People in this household</h3>
+            <p class="muted">The first adult is used as the primary contact name. Add everyone you want individually selectable in Guest Profiles and Wedding Jobs.</p>
+          </div>
+          <div class="invitation-person-add-actions-v105">
+            <button class="secondary" type="button" onclick="addInvitationPersonRowV105('adult')">+ Adult</button>
+            <button class="secondary" type="button" onclick="addInvitationPersonRowV105('child')">+ Child</button>
+          </div>
+        </div>
+
+        <div id="invitation-people-editor-v105">
+          ${people.map(invitationPersonRowV105).join('')}
+        </div>
+      </section>
+
+      <div class="modal-actions">
+        <button type="button" class="secondary" onclick="closeModal()">Cancel</button>
+        <button class="primary" type="submit">Save Invitation & People</button>
+      </div>
+    </form>
+  </div>`);
+};
+
+saveInvitation = async function(event, id = '') {
+  event.preventDefault();
+
+  const formElement = event.target;
+  const submit = formElement.querySelector('[type="submit"]');
+  if (submit) {
+    submit.disabled = true;
+    submit.textContent = 'Saving…';
+  }
+
+  const form = new FormData(formElement);
+  const people = collectInvitationPeopleV105(formElement);
+
+  if (!people.length || people.some(person => !person.person_name)) {
+    if (submit) {
+      submit.disabled = false;
+      submit.textContent = 'Save Invitation & People';
+    }
+    return toast('Enter a name for every person in the household.', 'error');
+  }
+
+  const primaryPerson = people.find(person => person.person_type === 'adult') || people[0];
+  const primary = splitNameForPrimaryV105(primaryPerson.person_name);
+
+  const payload = {
+    household_name: String(form.get('household_name') || '').trim(),
+    primary_first_name: primary.first,
+    primary_last_name: primary.last,
+    max_guests: Math.max(1, Number(form.get('max_guests') || people.length)),
+    status: String(form.get('status') || 'invited')
+  };
+
+  for (const key of ['phone','email','street_address','city','state','zip_code','private_notes']) {
+    payload[key] = String(form.get(key) || '').trim() || null;
+  }
+
+  if (!payload.household_name) {
+    if (submit) {
+      submit.disabled = false;
+      submit.textContent = 'Save Invitation & People';
+    }
+    return toast('Enter a household name.', 'error');
+  }
+
+  let invitationId = id;
+
+  if (id) {
+    const { error } = await db.from('invitations').update(payload).eq('id', id);
+    if (error) {
+      if (submit) {
+        submit.disabled = false;
+        submit.textContent = 'Save Invitation & People';
+      }
+      return toast(error.message, 'error');
+    }
+  } else {
+    const { data, error } = await db.from('invitations').insert(payload).select('id').single();
+    if (error) {
+      if (submit) {
+        submit.disabled = false;
+        submit.textContent = 'Save Invitation & People';
+      }
+      return toast(error.message, 'error');
+    }
+    invitationId = data.id;
+  }
+
+  // Replace the household people with exactly what is shown in the editor.
+  // Existing IDs are retained when possible so the records stay stable.
+  const existing = id ? invitationPeopleV101(id) : [];
+  const existingIds = new Set(existing.map(person => person.id));
+  const keptIds = new Set();
+
+  for (const person of people) {
+    if (person.id && existingIds.has(person.id)) {
+      keptIds.add(person.id);
+      const { error } = await db.from('invitation_people').update({
+        person_name: person.person_name,
+        person_type: person.person_type,
+        sort_order: person.sort_order
+      }).eq('id', person.id);
+
+      if (error) {
+        return toast(`Invitation saved, but a person could not be updated: ${error.message}`, 'error');
+      }
+    } else {
+      const { error } = await db.from('invitation_people').insert({
+        invitation_id: invitationId,
+        person_name: person.person_name,
+        person_type: person.person_type,
+        sort_order: person.sort_order
+      });
+
+      if (error) {
+        // On brand-new invitations the insert trigger may already have created
+        // one or more matching names. Update those rows after reloading instead
+        // of failing on the unique invitation/name rule.
+        if (!String(error.message || '').toLowerCase().includes('duplicate')) {
+          return toast(`Invitation saved, but a person could not be added: ${error.message}`, 'error');
+        }
+      }
+    }
+  }
+
+  if (id) {
+    const removeIds = existing
+      .filter(person => !keptIds.has(person.id) && !people.some(newPerson => newPerson.id === person.id))
+      .map(person => person.id);
+
+    if (removeIds.length) {
+      const { error } = await db.from('invitation_people').delete().in('id', removeIds);
+      if (error) return toast(`Invitation saved, but an old household member could not be removed: ${error.message}`, 'error');
+    }
+  } else {
+    // The insert trigger generated parsed defaults. Make the final set exactly
+    // match the editor, including adult/child types and ordering.
+    const { data: generated, error: generatedError } = await db
+      .from('invitation_people')
+      .select('*')
+      .eq('invitation_id', invitationId);
+
+    if (!generatedError) {
+      const wantedNames = new Set(people.map(person => normalizeDuplicateTextV101(person.person_name)));
+      const extras = (generated || []).filter(row => !wantedNames.has(normalizeDuplicateTextV101(row.person_name)));
+      if (extras.length) {
+        await db.from('invitation_people').delete().in('id', extras.map(row => row.id));
+      }
+
+      for (const person of people) {
+        const row = (generated || []).find(g => normalizeDuplicateTextV101(g.person_name) === normalizeDuplicateTextV101(person.person_name));
+        if (row) {
+          await db.from('invitation_people').update({
+            person_type: person.person_type,
+            sort_order: person.sort_order
+          }).eq('id', row.id);
+        }
+      }
+    }
+  }
+
+  closeModal();
+  toast(id ? 'Invitation and household people updated.' : 'Invitation and household people added.');
+  await loadAdmin();
+};
+

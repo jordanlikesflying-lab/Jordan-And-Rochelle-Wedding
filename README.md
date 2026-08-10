@@ -301,3 +301,15 @@ No SQL required.
 No SQL required.
 
 Duplicate invitation detection now compares every individual named person in each household. A duplicate is flagged even when the matching person is not the primary contact.
+
+
+## v1.0.5 — Household People & Duplicate Review
+
+Run `v1.0.5-household-people-and-duplicate-review.sql` before deploying.
+
+- Review a possible duplicate and mark a pair **Not a duplicate**; the dismissal is saved in Supabase.
+- Edit every named person inside an invitation household.
+- Add additional adults or children.
+- Remove household members.
+- The household label remains independent from the individual names.
+- The first adult becomes the stored primary contact name for RSVP matching and existing workflows.
