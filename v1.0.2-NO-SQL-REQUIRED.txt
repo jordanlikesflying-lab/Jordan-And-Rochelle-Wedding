@@ -1,0 +1,14 @@
+Jordan & Rochelle Wedding Manager v1.0.2
+
+NO SQL REQUIRED when upgrading from v1.0.1-final.
+
+Guest Profiles now keep households grouped while allowing an admin to select
+each individual person within the household.
+
+Selecting a person:
+- focuses the profile on that person's name
+- shows that person's Wedding Jobs
+- preselects that person when assigning a new Wedding Job
+
+All v1.0.1 invitation people, duplicate flags, RSVP people editing,
+and gift quantity features remain unchanged.

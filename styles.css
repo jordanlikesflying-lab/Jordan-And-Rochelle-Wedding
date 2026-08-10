@@ -272,3 +272,51 @@ img{max-width:100%}
   .gift-claim-row-v101{align-items:stretch;flex-direction:column}
   .gift-claim-row-v101 button{width:100%}
 }
+
+/* v1.0.2 — selectable people inside households */
+.guest-household-group-v102{
+  border-bottom:1px solid #eadfd8;
+}
+.guest-household-group-v102.active{
+  background:#fffaf6;
+}
+.guest-household-main-v102{
+  width:100%;border:0;background:transparent;text-align:left;
+  display:grid;grid-template-columns:auto 1fr auto;align-items:center;gap:.75rem;
+  padding:.85rem;
+}
+.guest-household-people-v102{
+  display:grid;gap:.3rem;padding:0 .65rem .75rem 3.75rem;
+}
+.guest-person-choice-v102{
+  display:flex;align-items:center;justify-content:space-between;gap:.75rem;
+  width:100%;border:1px solid transparent;background:transparent;
+  border-radius:10px;padding:.55rem .7rem;text-align:left;color:#4e403c;
+}
+.guest-person-choice-v102:hover,
+.guest-person-choice-v102.active{
+  background:#f3e9e3;border-color:#dbc9c0;
+}
+.guest-person-choice-v102 span{font-weight:700}
+.guest-person-choice-v102 small{color:#7a6963}
+.selected-household-members-v102{
+  margin:0 0 1rem;padding:1rem;border:1px solid #eadfd8;
+  border-radius:16px;background:#fffaf6;
+}
+.selected-household-members-v102 h3{margin:0}
+.selected-household-members-v102 p{margin:.2rem 0 0}
+.selected-member-buttons-v102{
+  display:flex;flex-wrap:wrap;gap:.5rem;margin-top:.8rem;
+}
+.selected-member-buttons-v102 button{
+  border:1px solid #dbc9c0;background:white;color:#4e403c;
+  border-radius:999px;padding:.55rem .85rem;font-weight:700;
+}
+.selected-member-buttons-v102 button.active{
+  background:#82584f;color:white;border-color:#82584f;
+}
+@media(max-width:650px){
+  .guest-household-people-v102{padding-left:1rem}
+  .guest-household-main-v102{grid-template-columns:auto 1fr}
+  .guest-household-main-v102>.status-pill{grid-column:2}
+}

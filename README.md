@@ -278,3 +278,10 @@ This package supersedes the earlier v1.0.1 package if it has not yet been deploy
 - Each guest claim has its own private release token.
 - Admin can release individual claims without releasing everyone else's claim.
 - Excel/CSV gift import supports optional Quantity / Qty / Quantity Wanted columns.
+
+
+## v1.0.2 — Select People Inside a Household
+
+No SQL migration is required when upgrading from v1.0.1-final.
+
+Guest Profiles now keeps each household together while showing every named person underneath it. Selecting a person focuses the detail panel on that individual, shows that person's Wedding Jobs, and preselects that person when assigning a job.

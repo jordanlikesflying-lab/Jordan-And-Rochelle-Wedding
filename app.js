@@ -5295,3 +5295,230 @@ summaryMetricsV080 = function() {
   return metrics;
 };
 
+
+/* ===== v1.0.2 Select People Inside a Household ===== */
+
+let selectedGuestPersonKeyV102 = '';
+
+function householdPeopleForRecordV102(record) {
+  if (!record) return [];
+
+  if (record.rsvp) {
+    const people = rsvpPeopleV071(record.rsvp.id);
+    if (people.length) {
+      return people.map(person => ({
+        key: `person:${person.id}`,
+        id: person.id,
+        name: person.person_name,
+        type: person.person_type || 'adult',
+        source: 'rsvp'
+      }));
+    }
+
+    const fallbackName = `${record.rsvp.first_name || ''} ${record.rsvp.last_name || ''}`.trim();
+    return fallbackName ? [{
+      key: `rsvp:${record.rsvp.id}`,
+      id: '',
+      name: fallbackName,
+      type: 'adult',
+      source: 'rsvp'
+    }] : [];
+  }
+
+  if (record.invitation) {
+    const people = invitationPeopleV101(record.invitation.id);
+    if (people.length) {
+      return people.map(person => ({
+        key: `invite-person:${person.id}`,
+        id: person.id,
+        name: person.person_name,
+        type: 'invited',
+        source: 'invitation'
+      }));
+    }
+
+    const fallbackName = `${record.invitation.primary_first_name || ''} ${record.invitation.primary_last_name || ''}`.trim();
+    return fallbackName ? [{
+      key: `invite:${record.invitation.id}`,
+      id: '',
+      name: fallbackName,
+      type: 'invited',
+      source: 'invitation'
+    }] : [];
+  }
+
+  return [];
+}
+
+function activePersonForRecordV102(record) {
+  const people = householdPeopleForRecordV102(record);
+  if (!people.length) return null;
+
+  const selected = people.find(person => person.key === selectedGuestPersonKeyV102);
+  return selected || people[0];
+}
+
+function chooseHouseholdPersonV102(recordKey, personKey) {
+  const [type, id] = String(recordKey || '').split(':');
+  selectedGuestId = type === 'rsvp' ? id : null;
+  selectedInvitationProfileId = type === 'invitation' ? id : null;
+  selectedGuestPersonKeyV102 = personKey || '';
+  render();
+}
+
+const baseSelectGuestRecordV102 = selectGuestRecord;
+selectGuestRecord = function(key) {
+  selectedGuestPersonKeyV102 = '';
+  baseSelectGuestRecordV102(key);
+};
+
+const baseOpenGuestByRsvpV102 = openGuestByRsvp;
+openGuestByRsvp = function(id) {
+  selectedGuestPersonKeyV102 = '';
+  baseOpenGuestByRsvpV102(id);
+};
+
+const baseOpenGuestByInvitationV102 = openGuestByInvitation;
+openGuestByInvitation = function(id) {
+  selectedGuestPersonKeyV102 = '';
+  baseOpenGuestByInvitationV102(id);
+};
+
+function renderHouseholdGuestListItemV102(record, active) {
+  const people = householdPeopleForRecordV102(record);
+  const reasons = recordDuplicateReasonsV101(record);
+  const activePerson = active ? activePersonForRecordV102(record) : null;
+  const sub = record.rsvp
+    ? `${titleCase(record.rsvp.attendance)} · ${people.length} ${people.length === 1 ? 'person' : 'people'}`
+    : `No RSVP yet · ${people.length} ${people.length === 1 ? 'person' : 'people'}`;
+
+  return `<div class="guest-household-group-v102 ${active ? 'active' : ''} ${reasons.length ? 'possible-duplicate-item-v101' : ''}">
+    <button class="guest-household-main-v102" onclick="chooseHouseholdPersonV102('${record.key}','${esc(people[0]?.key || '')}')">
+      <span class="guest-avatar">${esc((record.household || record.name || '?').charAt(0).toUpperCase())}</span>
+      <span class="guest-list-copy">
+        <strong>${esc(record.household || record.name)}</strong>
+        <small>${esc(sub)}</small>
+        ${duplicateBadgeV101(reasons)}
+      </span>
+      ${record.rsvp ? statusPill(record.rsvp.verification_status) : statusPill(record.invitation.status)}
+    </button>
+    ${people.length ? `<div class="guest-household-people-v102">
+      ${people.map(person => `<button
+        class="guest-person-choice-v102 ${activePerson?.key === person.key ? 'active' : ''}"
+        onclick="chooseHouseholdPersonV102('${record.key}','${esc(person.key)}')">
+        <span>${esc(person.name)}</span>
+        <small>${person.source === 'rsvp' ? esc(titleCase(person.type)) : 'Invited'}</small>
+      </button>`).join('')}
+    </div>` : ''}
+  </div>`;
+}
+
+renderGuestProfiles = function() {
+  const all = guestRecords();
+  const query = guestSearch.trim().toLowerCase();
+
+  const filtered = query ? all.filter(record => {
+    const peopleText = householdPeopleForRecordV102(record).map(person => person.name).join(' ');
+    return [
+      record.name, record.household, record.phone, record.email, record.city, record.state,
+      record.rsvp?.additional_guests, record.invitation?.private_notes, peopleText
+    ].some(value => String(value || '').toLowerCase().includes(query));
+  }) : all;
+
+  let selected = null;
+  if (selectedGuestId) {
+    selected = filtered.find(record => record.type === 'rsvp' && record.id === selectedGuestId) || null;
+  }
+  if (!selected && selectedInvitationProfileId) {
+    selected = filtered.find(record => record.type === 'invitation' && record.id === selectedInvitationProfileId) || null;
+  }
+
+  if (!selected && filtered.length) {
+    selected = filtered[0];
+    selectedGuestId = selected.type === 'rsvp' ? selected.id : null;
+    selectedInvitationProfileId = selected.type === 'invitation' ? selected.id : null;
+    selectedGuestPersonKeyV102 = householdPeopleForRecordV102(selected)[0]?.key || '';
+  }
+
+  if (selected && !selectedGuestPersonKeyV102) {
+    selectedGuestPersonKeyV102 = householdPeopleForRecordV102(selected)[0]?.key || '';
+  }
+
+  return `<div class="admin-view">
+    <div class="view-heading"><div><p class="eyebrow">People & households</p><h1>Guest Profiles</h1>
+      <p>Select a household, then choose the individual person you want to work with.</p></div></div>
+    <div class="guest-toolbar">
+      <input id="guest-search" type="search" value="${esc(guestSearch)}" placeholder="Search household, person, phone, email, city, or notes" oninput="setGuestSearch(this.value)">
+      <span>${filtered.length} household${filtered.length === 1 ? '' : 's'}</span>
+    </div>
+    <div class="guest-split">
+      <aside class="guest-list guest-household-list-v102">
+        ${filtered.length ? filtered.map(record => renderHouseholdGuestListItemV102(record, selected?.key === record.key)).join('') : '<p class="muted guest-empty">No matching guests.</p>'}
+      </aside>
+      <section class="guest-profile-detail">
+        ${selected ? renderSelectedGuestPersonProfileV102(selected) : '<div class="empty-state admin-empty"><h2>No guest selected</h2></div>'}
+      </section>
+    </div>
+  </div>`;
+};
+
+function renderSelectedGuestPersonProfileV102(record) {
+  const people = householdPeopleForRecordV102(record);
+  const person = activePersonForRecordV102(record);
+
+  if (!person) return renderGuestProfile(record);
+
+  const focusedRecord = {
+    ...record,
+    name: person.name
+  };
+
+  let html = renderGuestProfile(focusedRecord);
+
+  const selector = `<section class="selected-household-members-v102">
+    <div class="profile-section-heading"><div><h3>${esc(record.household)}</h3><p class="muted">Choose a person in this household</p></div></div>
+    <div class="selected-member-buttons-v102">
+      ${people.map(member => `<button class="${member.key === person.key ? 'active' : ''}"
+        onclick="chooseHouseholdPersonV102('${record.key}','${esc(member.key)}')">${esc(member.name)}</button>`).join('')}
+    </div>
+  </section>`;
+
+  html = html.replace('<div class="profile-info-grid">', selector + '<div class="profile-info-grid">');
+
+  // Focus the wedding-job list on the selected person instead of showing every
+  // household member's assignment together.
+  const personAssignments = (adminData.assignments || []).filter(assignment => {
+    if (person.key.startsWith('person:')) {
+      return assignment.rsvp_person_id === person.id ||
+        (!assignment.rsvp_person_id && assignment.rsvp_id === record.rsvp?.id && assignment.person_name === person.name);
+    }
+    return assignment.invitation_id === record.invitation?.id && assignment.person_name === person.name;
+  });
+
+  const jobsSectionPattern = /<section class="profile-section"><div class="profile-section-heading"><h3>Wedding jobs<\/h3>[\s\S]*?<\/section>/;
+  const personJobSection = `<section class="profile-section">
+    <div class="profile-section-heading"><h3>Wedding jobs for ${esc(person.name)}</h3>
+      <button onclick="openAssignmentDialogForPersonV102('${record.rsvp?.id || ''}','${record.invitation?.id || ''}','${esc(person.key)}')">Assign job</button>
+    </div>
+    ${personAssignments.length ? `<div class="assignment-list">${personAssignments.map(renderAssignmentRow).join('')}</div>` : `<p class="muted">No wedding jobs assigned to ${esc(person.name)}.</p>`}
+  </section>`;
+
+  html = html.replace(jobsSectionPattern, personJobSection);
+  return html;
+}
+
+function openAssignmentDialogForPersonV102(rsvpId = '', invitationId = '', personKey = '') {
+  openAssignmentDialog(rsvpId, invitationId, '');
+
+  requestAnimationFrame(() => {
+    const select = document.querySelector('#modal select[name="guest_record"]');
+    if (!select) return;
+
+    const option = [...select.options].find(item => item.value === personKey);
+    if (!option) return;
+
+    select.value = personKey;
+    fillProfileAssignmentEmailV063(personKey);
+  });
+}
+
