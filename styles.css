@@ -163,3 +163,71 @@
   .summary-mini-grid-v080{grid-template-columns:1fr}
   .summary-switch-list-v080>div{align-items:flex-start;flex-direction:column;gap:.35rem}
 }
+
+
+/* v0.9.0 Final Polish */
+html{scroll-behavior:smooth}
+button,a,input,select,textarea{-webkit-tap-highlight-color:transparent}
+button,a{touch-action:manipulation}
+button:focus-visible,a:focus-visible,input:focus-visible,select:focus-visible,textarea:focus-visible{
+  outline:3px solid rgba(130,88,79,.35);
+  outline-offset:3px
+}
+input,select,textarea{font-size:16px}
+img{max-width:100%}
+.hero-engagement-photo{overflow:hidden}
+.hero-engagement-photo img{width:100%;height:100%;object-fit:cover;display:block}
+.map-card iframe{display:block;width:100%;min-height:360px;border:0;border-radius:18px}
+.modal-backdrop{overflow:auto;padding:14px}
+.modal-card{max-height:calc(100vh - 28px);overflow:auto}
+.main-menu-button{min-height:44px}
+.primary,.secondary,.sidebar-button,.sidebar-signout,.info-card{min-height:44px}
+.choice-row label{min-height:48px;display:flex;align-items:center;gap:.5rem}
+.choice-row input{width:20px;height:20px;flex:none}
+.rsvp-form textarea{resize:vertical;min-height:110px}
+.public-registry-card img,.public-photo-card img{display:block}
+.table-wrap{-webkit-overflow-scrolling:touch}
+.command-main,.admin-panel,.public-registry-copy{overflow-wrap:anywhere}
+.error-card,.success-card,.loading-card{overflow-wrap:anywhere}
+
+@media(max-width:780px){
+  .site-header{padding:14px 18px}
+  .brand{font-size:1.2rem}
+  .content-page{padding:38px 16px 70px}
+  .hero{padding:42px 18px;gap:28px}
+  .quick-grid{padding:0 16px;margin-bottom:58px}
+  .info-card{padding:22px}
+  .rsvp-form{border-radius:18px}
+  .detail-card{padding:20px}
+  .panel-heading,.view-heading{align-items:stretch;flex-direction:column}
+  .panel-heading>button,.view-heading>button{align-self:flex-start}
+}
+
+@media(max-width:520px){
+  body{min-width:0}
+  .splash{padding:14px}
+  .splash-card{border-radius:20px}
+  .hero-photo{min-height:250px;border-radius:22px}
+  .page-heading{margin-bottom:28px}
+  .page-heading h2{overflow-wrap:anywhere}
+  .rsvp-form{padding:20px 16px}
+  .choice-row{gap:10px}
+  .choice-row label{width:100%}
+  .primary,.secondary{max-width:100%}
+  .registry-link-row{align-items:stretch;flex-direction:column}
+  .registry-link-row a{text-align:center}
+  .modal-card{width:100%!important}
+  .modal-actions{align-items:stretch;flex-direction:column-reverse}
+  .modal-actions button{width:100%}
+  .summary-progress-number-v080{align-items:flex-start;flex-direction:column;gap:.25rem}
+}
+
+@media(prefers-reduced-motion:reduce){
+  html{scroll-behavior:auto}
+  *,*::before,*::after{
+    scroll-behavior:auto!important;
+    transition-duration:.01ms!important;
+    animation-duration:.01ms!important;
+    animation-iteration-count:1!important
+  }
+}

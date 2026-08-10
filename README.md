@@ -172,3 +172,20 @@ Wedding Summary now includes:
 - homepage-favorite status
 - public-site visibility checks for RSVP, registry, album, details, and map
 - a single **What Still Needs Attention?** section linking directly to the relevant Command Center page
+
+
+## v0.9.0 — Final Polish & Testing
+
+No SQL migration is required.
+
+This release intentionally adds no new wedding-planning features. It focuses on:
+- cache-busting `app.js`, `styles.css`, and `config.js` so new Netlify deploys do not keep showing an older file
+- no-store handling for private token-response pages and config
+- improved phone/tablet layouts and touch targets
+- better mobile keyboard/autofill hints for RSVP and claim forms
+- keyboard focus styling and Escape-to-close for Command Center/guest modals
+- reduced-motion support
+- safer external-link referrer behavior
+- final regression checklist before v1.0.0
+
+See `v0.9.0-FINAL-TEST-CHECKLIST.md`.

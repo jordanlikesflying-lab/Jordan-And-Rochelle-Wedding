@@ -1,0 +1,10 @@
+Jordan & Rochelle Wedding Manager v0.9.0
+
+NO SUPABASE SQL CHANGES ARE REQUIRED.
+
+Deploy the website files to GitHub/main and let Netlify deploy automatically.
+
+Important improvement:
+app.js, styles.css, and config.js now use v0.9.0 cache-busting references, and Netlify headers force revalidation so future deploys are much less likely to show an old JavaScript file.
+
+After deployment, use v0.9.0-FINAL-TEST-CHECKLIST.md for the last test pass before v1.0.0.

@@ -4023,3 +4023,87 @@ function renderWeddingSummaryV080() {
 renderSummary = function() {
   return renderWeddingSummaryV080();
 };
+
+
+/* ===== v0.9.0 Final Polish & Testing ===== */
+
+let uiPolishInitializedV090 = false;
+
+function polishUiV090() {
+  // Improve mobile keyboards and browser autofill without changing stored data.
+  const attrsByName = {
+    first_name: { autocomplete: 'given-name' },
+    last_name: { autocomplete: 'family-name' },
+    street_address: { autocomplete: 'street-address' },
+    city: { autocomplete: 'address-level2' },
+    state: { autocomplete: 'address-level1' },
+    zip_code: { autocomplete: 'postal-code', inputmode: 'numeric' },
+    phone: { autocomplete: 'tel', inputmode: 'tel', type: 'tel' },
+    email: { autocomplete: 'email', inputmode: 'email', type: 'email' },
+    claimant_email: { autocomplete: 'email', inputmode: 'email', type: 'email' },
+    claimant_name: { autocomplete: 'name' },
+    adult_count: { inputmode: 'numeric' },
+    child_count: { inputmode: 'numeric' }
+  };
+
+  Object.entries(attrsByName).forEach(([name, attrs]) => {
+    document.querySelectorAll(`[name="${name}"]`).forEach(el => {
+      Object.entries(attrs).forEach(([key, value]) => {
+        try { el.setAttribute(key, value); } catch {}
+      });
+    });
+  });
+
+  ['rsvp-message', 'login-message'].forEach(id => {
+    const region = document.getElementById(id);
+    if (region) {
+      region.setAttribute('aria-live', 'polite');
+      region.setAttribute('aria-atomic', 'true');
+    }
+  });
+
+  document.querySelectorAll('.modal-backdrop .modal-card').forEach(modal => {
+    modal.setAttribute('role', 'dialog');
+    modal.setAttribute('aria-modal', 'true');
+    if (!modal.getAttribute('aria-label') && !modal.getAttribute('aria-labelledby')) {
+      const heading = modal.querySelector('h1,h2,h3');
+      if (heading) {
+        if (!heading.id) heading.id = `modal-title-${Math.random().toString(36).slice(2)}`;
+        modal.setAttribute('aria-labelledby', heading.id);
+      }
+    }
+    const close = modal.querySelector('.modal-heading button');
+    if (close && !close.getAttribute('aria-label')) close.setAttribute('aria-label', 'Close dialog');
+
+    if (!modal.dataset.focusedV090) {
+      modal.dataset.focusedV090 = 'true';
+      const focusTarget = modal.querySelector('input:not([type="hidden"]),select,textarea,button,a[href]');
+      if (focusTarget) setTimeout(() => focusTarget.focus({ preventScroll: true }), 0);
+    }
+  });
+
+  document.querySelectorAll('a[target="_blank"]').forEach(link => {
+    const rel = new Set(String(link.getAttribute('rel') || '').split(/\s+/).filter(Boolean));
+    rel.add('noopener');
+    rel.add('noreferrer');
+    link.setAttribute('rel', [...rel].join(' '));
+  });
+
+  if (!uiPolishInitializedV090) {
+    uiPolishInitializedV090 = true;
+    document.addEventListener('keydown', event => {
+      if (event.key === 'Escape' && document.getElementById('modal') && typeof closeModal === 'function') {
+        closeModal();
+      }
+    });
+  }
+}
+
+const renderBaseV090 = render;
+render = function() {
+  renderBaseV090();
+  polishUiV090();
+};
+
+// Run once for the initial screen too.
+polishUiV090();
