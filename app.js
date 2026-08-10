@@ -5619,3 +5619,82 @@ invitationTable = function(items) {
   </table></div>`;
 };
 
+
+/* ===== v1.0.4 Duplicate detection across every person in a household ===== */
+
+function invitationPersonNamesForDuplicatesV104(invitation) {
+  // Prefer the persisted individual people created by v1.0.1.
+  const stored = invitationPeopleV101(invitation.id)
+    .map(person => normalizeDuplicateTextV101(person.person_name))
+    .filter(Boolean);
+
+  if (stored.length) return [...new Set(stored)];
+
+  // Fallback for any older/cached record where invitation_people is missing.
+  return parseInvitationPeopleV101(
+    invitation.household_name,
+    invitation.primary_first_name,
+    invitation.primary_last_name
+  )
+    .map(name => normalizeDuplicateTextV101(name))
+    .filter(Boolean);
+}
+
+function matchingInvitationPeopleV104(invitation) {
+  const names = invitationPersonNamesForDuplicatesV104(invitation);
+  const matches = new Set();
+
+  if (!names.length) return [];
+
+  (adminData.invitations || [])
+    .filter(other => other.id !== invitation.id && other.status !== 'cancelled')
+    .forEach(other => {
+      const otherNames = new Set(invitationPersonNamesForDuplicatesV104(other));
+      names.forEach(name => {
+        if (otherNames.has(name)) matches.add(name);
+      });
+    });
+
+  return [...matches];
+}
+
+invitationDuplicateReasonsV101 = function(invitation) {
+  const reasons = [];
+  const invitations = (adminData.invitations || []).filter(item => item.status !== 'cancelled');
+
+  const matchingPeople = matchingInvitationPeopleV104(invitation);
+  if (matchingPeople.length) {
+    reasons.push(`same person: ${matchingPeople.join(', ')}`);
+  }
+
+  const household = normalizeDuplicateTextV101(invitation.household_name);
+  const email = normalizeDuplicateTextV101(invitation.email);
+  const phone = normalizePhoneV101(invitation.phone);
+
+  if (household) {
+    const sameHousehold = invitations.some(other =>
+      other.id !== invitation.id &&
+      normalizeDuplicateTextV101(other.household_name) === household
+    );
+    if (sameHousehold) reasons.push('same household name');
+  }
+
+  if (email) {
+    const sameEmail = invitations.some(other =>
+      other.id !== invitation.id &&
+      normalizeDuplicateTextV101(other.email) === email
+    );
+    if (sameEmail) reasons.push('same email');
+  }
+
+  if (phone.length >= 7) {
+    const samePhone = invitations.some(other =>
+      other.id !== invitation.id &&
+      normalizePhoneV101(other.phone) === phone
+    );
+    if (samePhone) reasons.push('same phone');
+  }
+
+  return [...new Set(reasons)];
+};
+

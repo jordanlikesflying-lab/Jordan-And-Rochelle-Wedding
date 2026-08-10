@@ -1,0 +1,15 @@
+Jordan & Rochelle Wedding Manager v1.0.4
+
+NO SQL REQUIRED.
+
+Duplicate invitation detection now compares every named person inside
+each household, not just the Primary First Name / Primary Last Name fields.
+
+Example:
+Invitation A: John and Joe Weaver
+Invitation B: Joe Weaver
+
+Both invitations are flagged as possible duplicates because Joe Weaver
+appears in both households.
+
+Profile / Edit / Delete actions remain restored.

@@ -294,3 +294,10 @@ No SQL required.
 - Invitations are now flagged whenever another invitation has the same Primary First Name + Primary Last Name.
 - The Invite List Actions column is restored.
 - Profile, Edit, and Delete buttons are restored on invitation rows.
+
+
+## v1.0.4 — Household Person Duplicate Detection
+
+No SQL required.
+
+Duplicate invitation detection now compares every individual named person in each household. A duplicate is flagged even when the matching person is not the primary contact.
