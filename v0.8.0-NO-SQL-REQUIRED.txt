@@ -1,0 +1,9 @@
+Jordan & Rochelle Wedding Manager v0.8.0
+
+No Supabase SQL changes are required.
+
+Deployment:
+1. Replace the repository files with this release.
+2. Commit to main.
+3. Netlify will deploy automatically.
+4. Open Command Center > Wedding Summary and click Refresh Summary.

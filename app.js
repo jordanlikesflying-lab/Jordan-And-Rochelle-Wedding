@@ -3744,3 +3744,282 @@ async function deleteDuplicateRsvpV072(rsvpId) {
   selectedReviewId = null;
   await loadAdmin();
 }
+
+
+/* ===== v0.8.0 Wedding Summary ===== */
+
+function summaryMetricsV080() {
+  const invitations = adminData.invitations || [];
+  const activeInvitations = invitations.filter(i => i.status !== 'cancelled');
+  const rsvps = (adminData.rsvps || []).filter(r => r.verification_status !== 'rejected');
+  const verified = rsvps.filter(r => r.verification_status === 'verified');
+  const attending = verified.filter(r => r.attendance === 'attending');
+  const declined = verified.filter(r => r.attendance === 'declined');
+
+  const attendingAdults = attending.reduce((sum, r) => sum + Number(r.adult_count || 0), 0);
+  const attendingChildren = attending.reduce((sum, r) => sum + Number(r.child_count || 0), 0);
+  const attendingTotal = attendingAdults + attendingChildren;
+
+  const linkedRespondedHouseholds = new Set(
+    verified.map(r => r.invitation_id).filter(Boolean)
+  ).size;
+
+  const invitedCapacity = activeInvitations.reduce(
+    (sum, i) => sum + Number(i.max_guests || 0), 0
+  );
+
+  const jobs = adminData.jobs || [];
+  const jobRows = jobs.map(job => {
+    const stats = jobStats(job);
+    return { job, ...stats };
+  });
+  const unfilledJobs = jobRows.filter(row => row.remaining > 0);
+  const unfilledPositions = unfilledJobs.reduce((sum, row) => sum + row.remaining, 0);
+
+  const assignments = adminData.assignments || [];
+  const awaitingJobReplies = assignments.filter(
+    a => String(a.status || '').toLowerCase() === 'awaiting_response'
+  );
+  const acceptedAssignments = assignments.filter(a =>
+    ['accepted', 'confirmed'].includes(String(a.status || '').toLowerCase())
+  );
+
+  const registry = adminData.registry || [];
+  const visibleGifts = registry.filter(g => g.is_active);
+  const claimedGifts = visibleGifts.filter(g => Boolean(g.claimed_at));
+  const availableGifts = visibleGifts.filter(g => !g.claimed_at);
+  const hiddenGifts = registry.filter(g => !g.is_active);
+
+  const photos = adminData.photos || [];
+  const albumPhotos = photos.filter(p => p.show_in_guest_album);
+  const favoritePhotos = photos.filter(p => p.is_favorite_engagement);
+
+  const responsePercent = activeInvitations.length
+    ? Math.round((linkedRespondedHouseholds / activeInvitations.length) * 100)
+    : 0;
+
+  return {
+    invitations,
+    activeInvitations,
+    rsvps,
+    verified,
+    attending,
+    declined,
+    attendingAdults,
+    attendingChildren,
+    attendingTotal,
+    linkedRespondedHouseholds,
+    invitedCapacity,
+    responsePercent,
+    reviewCount: needsReview().length,
+    jobs,
+    jobRows,
+    unfilledJobs,
+    unfilledPositions,
+    awaitingJobReplies,
+    acceptedAssignments,
+    assignments,
+    registry,
+    visibleGifts,
+    claimedGifts,
+    availableGifts,
+    hiddenGifts,
+    photos,
+    albumPhotos,
+    favoritePhotos
+  };
+}
+
+function summaryStatusV080(ok, goodText, actionText) {
+  return `<span class="summary-status-v080 ${ok ? 'good' : 'attention'}">${ok ? '✓' : '!'} ${esc(ok ? goodText : actionText)}</span>`;
+}
+
+function summaryEmptyV080(text) {
+  return `<p class="summary-empty-v080">${esc(text)}</p>`;
+}
+
+function renderWeddingSummaryV080() {
+  const m = summaryMetricsV080();
+  const rsvpOpen = booleanSettingV070('rsvp_open', true);
+  const registryVisible = booleanSettingV070('registry_visible', true);
+  const albumVisible = booleanSettingV070('guest_album_visible', true);
+  const settings = settingsV070();
+  const amazonSet = Boolean(String(settings.amazon_registry_url || '').trim());
+  const otherRegistrySet = Boolean(String(settings.other_registry_url || '').trim());
+
+  const attentionItems = [];
+  if (m.reviewCount > 0) attentionItems.push({
+    view:'review',
+    title:`${m.reviewCount} RSVP${m.reviewCount === 1 ? '' : 's'} need review`,
+    detail:'Match, verify, or reject new submissions.'
+  });
+  if (m.unfilledPositions > 0) attentionItems.push({
+    view:'jobs',
+    title:`${m.unfilledPositions} wedding-job position${m.unfilledPositions === 1 ? '' : 's'} still unfilled`,
+    detail:`Across ${m.unfilledJobs.length} job${m.unfilledJobs.length === 1 ? '' : 's'}.`
+  });
+  if (m.awaitingJobReplies.length > 0) attentionItems.push({
+    view:'jobs',
+    title:`${m.awaitingJobReplies.length} job request${m.awaitingJobReplies.length === 1 ? '' : 's'} awaiting a reply`,
+    detail:'These people have not accepted or declined yet.'
+  });
+  if (registryVisible && m.visibleGifts.length === 0 && !amazonSet && !otherRegistrySet) attentionItems.push({
+    view:'registry',
+    title:'Registry is visible but has no guest-facing gifts',
+    detail:'Add a gift or registry link, or hide the registry in Settings.'
+  });
+  if (albumVisible && m.albumPhotos.length === 0) attentionItems.push({
+    view:'photos',
+    title:'Guest Photo Album is visible but empty',
+    detail:'Select at least one photo for the guest album or hide it in Settings.'
+  });
+  if (m.photos.length > 0 && m.favoritePhotos.length === 0) attentionItems.push({
+    view:'photos',
+    title:'No homepage favorite photo selected',
+    detail:'Choose one engagement photo for the public homepage.'
+  });
+
+  const guestProgressWidth = Math.max(0, Math.min(100, m.responsePercent));
+
+  return `<div class="admin-view summary-page-v080">
+    <div class="view-heading">
+      <div>
+        <p class="eyebrow">Everything in one place</p>
+        <h1>Wedding Summary</h1>
+        <p>Live planning status for ${esc(coupleDisplayV070())}.</p>
+      </div>
+      <button class="secondary" onclick="loadAdmin()">Refresh Summary</button>
+    </div>
+
+    <section class="summary-hero-v080">
+      <div>
+        <span>Wedding day</span>
+        <strong>${esc(weddingDateLongV070())}</strong>
+        <small>${esc(ceremonyTimeTextV070())} · ${esc(settingV070('venue_name','4-H Building'))} · ${esc(venueLocationV070())}</small>
+      </div>
+      <div class="summary-countdown-v080">
+        <strong>${Math.max(0, Math.ceil((weddingDateObjectV070().getTime() - Date.now()) / 86400000))}</strong>
+        <span>days to go</span>
+      </div>
+    </section>
+
+    <section class="summary-metric-grid-v080">
+      ${metricCard('Invited households', m.activeInvitations.length, `${m.invitedCapacity} maximum invited people`)}
+      ${metricCard('Attending', m.attendingTotal, `${m.attendingAdults} adults · ${m.attendingChildren} children`)}
+      ${metricCard('Declined RSVPs', m.declined.length, 'Verified declined responses')}
+      ${metricCard('Needs review', m.reviewCount, m.reviewCount ? 'Action required' : 'All caught up', m.reviewCount > 0)}
+      ${metricCard('Unfilled job spots', m.unfilledPositions, m.unfilledPositions ? `${m.unfilledJobs.length} jobs need people` : 'All listed jobs filled', m.unfilledPositions > 0)}
+      ${metricCard('Job replies waiting', m.awaitingJobReplies.length, m.awaitingJobReplies.length ? 'Email responses pending' : 'No outstanding requests', m.awaitingJobReplies.length > 0)}
+      ${metricCard('Available gifts', m.availableGifts.length, `${m.claimedGifts.length} claimed`)}
+      ${metricCard('Guest album photos', m.albumPhotos.length, `${m.photos.length} photos in private library`)}
+    </section>
+
+    <section class="summary-two-column-v080">
+      <article class="admin-panel summary-attention-v080">
+        <div class="panel-heading">
+          <div><h2>What Still Needs Attention?</h2><p class="muted">The items most likely to need your next action.</p></div>
+        </div>
+        ${attentionItems.length
+          ? `<div class="summary-attention-list-v080">${attentionItems.map(item => `<button onclick="setAdminView('${item.view}')">
+              <span><strong>${esc(item.title)}</strong><small>${esc(item.detail)}</small></span><b>Open →</b>
+            </button>`).join('')}</div>`
+          : `<div class="summary-all-clear-v080"><div>✓</div><strong>Nothing urgent right now</strong><p>Your RSVP review, jobs, registry, and photo setup have no obvious outstanding items.</p></div>`}
+      </article>
+
+      <article class="admin-panel">
+        <div class="panel-heading"><div><h2>RSVP Progress</h2><p class="muted">Verified RSVPs linked to invitation households.</p></div></div>
+        <div class="summary-progress-number-v080"><strong>${m.responsePercent}%</strong><span>${m.linkedRespondedHouseholds} of ${m.activeInvitations.length} households linked to a verified RSVP</span></div>
+        <div class="summary-progress-track-v080"><span style="width:${guestProgressWidth}%"></span></div>
+        <div class="summary-mini-grid-v080">
+          <div><span>Attending adults</span><strong>${m.attendingAdults}</strong></div>
+          <div><span>Attending children</span><strong>${m.attendingChildren}</strong></div>
+          <div><span>Verified attending RSVPs</span><strong>${m.attending.length}</strong></div>
+          <div><span>Reviewed RSVPs</span><strong>${reviewedRsvpsV071().length}</strong></div>
+        </div>
+        <button class="secondary summary-section-button-v080" onclick="setAdminView('review')">Open RSVP Review</button>
+      </article>
+    </section>
+
+    <section class="summary-two-column-v080">
+      <article class="admin-panel">
+        <div class="panel-heading"><div><h2>Wedding Jobs</h2><p class="muted">Who is helping and where you still need people.</p></div><button onclick="setAdminView('jobs')">Open Jobs</button></div>
+        <div class="summary-mini-grid-v080">
+          <div><span>Jobs listed</span><strong>${m.jobs.length}</strong></div>
+          <div><span>Accepted assignments</span><strong>${m.acceptedAssignments.length}</strong></div>
+          <div><span>Awaiting response</span><strong>${m.awaitingJobReplies.length}</strong></div>
+          <div><span>Unfilled positions</span><strong>${m.unfilledPositions}</strong></div>
+        </div>
+        <div class="summary-detail-list-v080">
+          ${m.unfilledJobs.length
+            ? m.unfilledJobs.map(row => `<button onclick="setAdminView('jobs')"><span><strong>${esc(row.job.title)}</strong><small>${row.filled} assigned · ${row.remaining} still needed</small></span>${summaryStatusV080(false,'','Needs help')}</button>`).join('')
+            : summaryEmptyV080('All currently listed wedding-job positions are filled.')}
+        </div>
+        ${m.awaitingJobReplies.length ? `<div class="summary-subheading-v080">Awaiting replies</div><div class="summary-detail-list-v080">
+          ${m.awaitingJobReplies.slice(0,6).map(a => {
+            const job = m.jobs.find(j => j.id === a.job_id);
+            return `<button onclick="setAdminView('jobs')"><span><strong>${esc(a.person_name || 'Assigned helper')}</strong><small>${esc(job?.title || 'Wedding job')}</small></span>${summaryStatusV080(false,'','Waiting')}</button>`;
+          }).join('')}
+          ${m.awaitingJobReplies.length > 6 ? `<p class="muted">+ ${m.awaitingJobReplies.length - 6} more awaiting replies</p>` : ''}
+        </div>` : ''}
+      </article>
+
+      <article class="admin-panel">
+        <div class="panel-heading"><div><h2>Gift Registry</h2><p class="muted">Guest-facing gift choices and claims.</p></div><button onclick="setAdminView('registry')">Open Registry</button></div>
+        <div class="summary-mini-grid-v080">
+          <div><span>Gift ideas</span><strong>${m.registry.length}</strong></div>
+          <div><span>Available</span><strong>${m.availableGifts.length}</strong></div>
+          <div><span>Claimed</span><strong>${m.claimedGifts.length}</strong></div>
+          <div><span>Hidden</span><strong>${m.hiddenGifts.length}</strong></div>
+        </div>
+        <div class="summary-switch-list-v080">
+          <div><span>Registry on guest site</span>${summaryStatusV080(registryVisible,'Shown','Hidden')}</div>
+          <div><span>Amazon registry link</span>${summaryStatusV080(amazonSet,'Added','Not added')}</div>
+          <div><span>Second registry link</span>${summaryStatusV080(otherRegistrySet,'Added','Not added')}</div>
+        </div>
+        ${m.claimedGifts.length ? `<div class="summary-subheading-v080">Recently claimed</div><div class="summary-detail-list-v080">
+          ${m.claimedGifts.slice(0,5).map(g => {
+            const claim = currentRegistryClaimV071(g.id);
+            return `<button onclick="setAdminView('registry')"><span><strong>${esc(g.title)}</strong><small>${claim ? `Claimed by ${esc(claim.claimant_name)}` : 'Claimed by guest'}</small></span>${summaryStatusV080(true,'Claimed','')}</button>`;
+          }).join('')}
+        </div>` : ''}
+      </article>
+    </section>
+
+    <section class="summary-two-column-v080">
+      <article class="admin-panel">
+        <div class="panel-heading"><div><h2>Photos</h2><p class="muted">Private library, guest album, and homepage favorite.</p></div><button onclick="setAdminView('photos')">Open Photos</button></div>
+        <div class="summary-mini-grid-v080">
+          <div><span>Private library</span><strong>${m.photos.length}</strong></div>
+          <div><span>Guest album</span><strong>${m.albumPhotos.length}</strong></div>
+          <div><span>Homepage favorite</span><strong>${m.favoritePhotos.length ? 'Yes' : 'No'}</strong></div>
+          <div><span>Album visibility</span><strong>${albumVisible ? 'Shown' : 'Hidden'}</strong></div>
+        </div>
+        <div class="summary-switch-list-v080">
+          <div><span>Guest album</span>${summaryStatusV080(albumVisible,'Shown to guests','Hidden')}</div>
+          <div><span>Homepage favorite selected</span>${summaryStatusV080(m.favoritePhotos.length > 0,'Selected','Choose one')}</div>
+          <div><span>At least one album photo</span>${summaryStatusV080(m.albumPhotos.length > 0,'Ready','Add photos')}</div>
+        </div>
+      </article>
+
+      <article class="admin-panel">
+        <div class="panel-heading"><div><h2>Guest Website</h2><p class="muted">Current public visibility settings.</p></div><button onclick="setAdminView('settings')">Open Settings</button></div>
+        <div class="summary-switch-list-v080">
+          <div><span>RSVP form</span>${summaryStatusV080(rsvpOpen,'Open','Closed')}</div>
+          <div><span>Gift Registry</span>${summaryStatusV080(registryVisible,'Shown','Hidden')}</div>
+          <div><span>Photo Album</span>${summaryStatusV080(albumVisible,'Shown','Hidden')}</div>
+          <div><span>Wedding Details</span>${summaryStatusV080(Boolean(String(settings.details_text || '').trim()),'Details added','Add details')}</div>
+          <div><span>Venue map</span>${summaryStatusV080(Boolean(String(settings.map_query || '').trim()),'Location set','Check location')}</div>
+        </div>
+        <div class="summary-public-copy-v080">
+          <span>Homepage welcome</span>
+          <strong>${esc(settingV070('welcome_heading','Celebrate with us'))}</strong>
+          <p>${esc(settingV070('welcome_message','')).replace(/\n/g,'<br>')}</p>
+        </div>
+      </article>
+    </section>
+  </div>`;
+}
+
+renderSummary = function() {
+  return renderWeddingSummaryV080();
+};

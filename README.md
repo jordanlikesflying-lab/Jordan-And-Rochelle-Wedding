@@ -153,3 +153,22 @@ Changes:
 - Deletion is blocked when wedding-job assignments still reference that RSVP.
 - Invitation status is recalculated after deletion.
 - Permanently includes the v0.7.1 invitation-status enum merge fix.
+
+
+## v0.8.0 — Wedding Summary
+
+No SQL migration is required for this release.
+
+Wedding Summary now includes:
+- invited household and invited-capacity totals
+- verified attending adults and children
+- declined RSVP and review counts
+- RSVP household-response progress
+- unfilled wedding-job positions
+- job requests awaiting responses
+- accepted assignment count
+- available / claimed / hidden gift totals
+- private photo-library and guest-album counts
+- homepage-favorite status
+- public-site visibility checks for RSVP, registry, album, details, and map
+- a single **What Still Needs Attention?** section linking directly to the relevant Command Center page
