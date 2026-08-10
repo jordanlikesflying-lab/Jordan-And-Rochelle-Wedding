@@ -1,0 +1,9 @@
+Jordan & Rochelle Wedding Manager v1.0.6
+
+NO SQL REQUIRED.
+
+Fix:
+Saved "Not a duplicate" decisions are now loaded as part of the Command
+Center's initial Supabase data load. They no longer disappear on page refresh.
+
+All v1.0.5 household people editing remains unchanged.

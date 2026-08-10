@@ -421,22 +421,24 @@ async function loadAdmin() {
     return;
   }
 
-  const [invitations, rsvps, jobs, assignments, registry, photos] = await Promise.all([
+  const [invitations, rsvps, jobs, assignments, registry, photos, duplicateDismissals] = await Promise.all([
     db.from('invitations').select('*').order('household_name', { ascending: true }),
     db.from('rsvps').select('*').order('created_at', { ascending: false }),
     db.from('wedding_jobs').select('*').order('starts_at', { ascending: true, nullsFirst: false }),
     db.from('job_assignments').select('*').order('created_at', { ascending: false }),
     db.from('registry_items').select('*').order('sort_order', { ascending: true }),
-    db.from('photos').select('*').order('sort_order', { ascending: true })
+    db.from('photos').select('*').order('sort_order', { ascending: true }),
+    db.from('duplicate_dismissals').select('*').order('created_at', { ascending: false })
   ]);
 
-  const firstError = [invitations, rsvps, jobs, assignments, registry, photos].find((result) => result.error)?.error;
+  const firstError = [invitations, rsvps, jobs, assignments, registry, photos, duplicateDismissals].find((result) => result.error)?.error;
   if (firstError) {
     adminError = `${firstError.message} Make sure this account exists in admin_users.`;
   } else {
     adminData = {
       invitations: invitations.data || [], rsvps: rsvps.data || [], jobs: jobs.data || [],
-      assignments: assignments.data || [], registry: registry.data || [], photos: photos.data || []
+      assignments: assignments.data || [], registry: registry.data || [], photos: photos.data || [],
+      duplicateDismissals: duplicateDismissals.data || []
     };
   }
   loadingAdmin = false;
@@ -5718,12 +5720,18 @@ loadAdmin = async function() {
   await baseLoadAdminV105();
   if (!db || !session) return;
 
+  // duplicate_dismissals is now included in the base initial admin load.
+  // This second read keeps subsequent in-app refreshes current.
   const { data, error } = await db
     .from('duplicate_dismissals')
     .select('*')
     .order('created_at', { ascending: false });
 
-  if (!error) adminData.duplicateDismissals = data || [];
+  if (!error) {
+    adminData.duplicateDismissals = data || [];
+  } else if (!Array.isArray(adminData.duplicateDismissals)) {
+    adminData.duplicateDismissals = [];
+  }
   render();
 };
 

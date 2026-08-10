@@ -313,3 +313,8 @@ Run `v1.0.5-household-people-and-duplicate-review.sql` before deploying.
 - Remove household members.
 - The household label remains independent from the individual names.
 - The first adult becomes the stored primary contact name for RSVP matching and existing workflows.
+
+
+## v1.0.6 — Persistent Duplicate Review Fix
+
+No SQL required. Saved **Not a duplicate** decisions are loaded with the initial Command Center data, preventing duplicate warnings from returning after a browser refresh.
