@@ -1,0 +1,23 @@
+Jordan & Rochelle Wedding Manager v1.0.7
+
+RUN FIRST:
+v1.0.7-person-emails.sql
+
+Changes:
+1. Household people load reliably with the initial Command Center data.
+   You should no longer need to edit a household to make missing people appear.
+
+2. Wedding Jobs can assign multiple people at once.
+   - Assign People button on each job
+   - search by person name, household, or email
+   - grouped by household
+   - shows Attending / Not attending / No RSVP yet
+   - shows Already assigned
+   - select multiple people and save together
+   - optional email requests sent individually
+
+3. Each person inside an invitation can have a separate email address.
+   Edit Invitation -> People in this household -> Email
+   Job requests prefer that individual's email, with household/RSVP email fallback.
+
+No "job completed" status was added.

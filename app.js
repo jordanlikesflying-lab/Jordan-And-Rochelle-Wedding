@@ -421,24 +421,28 @@ async function loadAdmin() {
     return;
   }
 
-  const [invitations, rsvps, jobs, assignments, registry, photos, duplicateDismissals] = await Promise.all([
+  const [invitations, rsvps, jobs, assignments, registry, photos, duplicateDismissals, invitationPeople, rsvpPeople] = await Promise.all([
     db.from('invitations').select('*').order('household_name', { ascending: true }),
     db.from('rsvps').select('*').order('created_at', { ascending: false }),
     db.from('wedding_jobs').select('*').order('starts_at', { ascending: true, nullsFirst: false }),
     db.from('job_assignments').select('*').order('created_at', { ascending: false }),
     db.from('registry_items').select('*').order('sort_order', { ascending: true }),
     db.from('photos').select('*').order('sort_order', { ascending: true }),
-    db.from('duplicate_dismissals').select('*').order('created_at', { ascending: false })
+    db.from('duplicate_dismissals').select('*').order('created_at', { ascending: false }),
+    db.from('invitation_people').select('*').order('sort_order', { ascending: true }),
+    db.from('rsvp_people').select('*').order('sort_order', { ascending: true })
   ]);
 
-  const firstError = [invitations, rsvps, jobs, assignments, registry, photos, duplicateDismissals].find((result) => result.error)?.error;
+  const firstError = [invitations, rsvps, jobs, assignments, registry, photos, duplicateDismissals, invitationPeople, rsvpPeople].find((result) => result.error)?.error;
   if (firstError) {
     adminError = `${firstError.message} Make sure this account exists in admin_users.`;
   } else {
     adminData = {
       invitations: invitations.data || [], rsvps: rsvps.data || [], jobs: jobs.data || [],
       assignments: assignments.data || [], registry: registry.data || [], photos: photos.data || [],
-      duplicateDismissals: duplicateDismissals.data || []
+      duplicateDismissals: duplicateDismissals.data || [],
+      invitationPeople: invitationPeople.data || [],
+      rsvpPeople: rsvpPeople.data || []
     };
   }
   loadingAdmin = false;
@@ -6152,5 +6156,579 @@ saveInvitation = async function(event, id = '') {
   closeModal();
   toast(id ? 'Invitation and household people updated.' : 'Invitation and household people added.');
   await loadAdmin();
+};
+
+
+
+
+/* ===== v1.0.7 Reliable People + Multi-Assign Jobs + Per-Person Email ===== */
+
+function normalizedPersonNameV107(value) {
+  return String(value || '').trim().toLowerCase().replace(/\s+/g, ' ');
+}
+
+function invitationPersonEmailForRsvpMemberV107(invitationId, personName) {
+  if (!invitationId) return '';
+  const wanted = normalizedPersonNameV107(personName);
+  const match = (adminData.invitationPeople || []).find(person =>
+    person.invitation_id === invitationId &&
+    normalizedPersonNameV107(person.person_name) === wanted
+  );
+  return match?.email || '';
+}
+
+// Use each person's own invitation email whenever possible.
+// For RSVP-linked people, match their RSVP name back to the person on the invitation.
+assignmentPeopleV063 = function() {
+  const rows = [];
+  const rsvps = adminData.rsvps || [];
+  const rsvpPeople = adminData.rsvpPeople || [];
+  const invitationPeople = adminData.invitationPeople || [];
+  const invitations = adminData.invitations || [];
+
+  rsvps.forEach(rsvp => {
+    const invitation = rsvp.invitation_id ? invitations.find(i => i.id === rsvp.invitation_id) : null;
+    const household = invitation?.household_name || `${rsvp.first_name} ${rsvp.last_name}`.trim();
+    const members = rsvpPeople.filter(p => p.rsvp_id === rsvp.id);
+
+    if (members.length) {
+      members.forEach(member => rows.push({
+        key: `person:${member.id}`,
+        person_id: member.id,
+        rsvp_id: rsvp.id,
+        invitation_id: rsvp.invitation_id || null,
+        invitation_person_id: null,
+        person_name: member.person_name,
+        household,
+        email: invitationPersonEmailForRsvpMemberV107(rsvp.invitation_id, member.person_name) ||
+          rsvp.email || invitation?.email || '',
+        attendance: rsvp.attendance || '',
+        verification_status: rsvp.verification_status || ''
+      }));
+    } else {
+      const primaryName = `${rsvp.first_name} ${rsvp.last_name}`.trim();
+      rows.push({
+        key: `rsvp:${rsvp.id}`,
+        person_id: null,
+        rsvp_id: rsvp.id,
+        invitation_id: rsvp.invitation_id || null,
+        invitation_person_id: null,
+        person_name: primaryName,
+        household,
+        email: invitationPersonEmailForRsvpMemberV107(rsvp.invitation_id, primaryName) ||
+          rsvp.email || invitation?.email || '',
+        attendance: rsvp.attendance || '',
+        verification_status: rsvp.verification_status || ''
+      });
+    }
+  });
+
+  invitations.forEach(invitation => {
+    if (rsvps.some(r => r.invitation_id === invitation.id)) return;
+
+    const members = invitationPeople.filter(p => p.invitation_id === invitation.id);
+    if (members.length) {
+      members.forEach(member => rows.push({
+        key: `invite-person:${member.id}`,
+        person_id: null,
+        rsvp_id: null,
+        invitation_id: invitation.id,
+        invitation_person_id: member.id,
+        person_name: member.person_name,
+        household: invitation.household_name,
+        email: member.email || invitation.email || '',
+        attendance: '',
+        verification_status: ''
+      }));
+    } else {
+      rows.push({
+        key: `invite:${invitation.id}`,
+        person_id: null,
+        rsvp_id: null,
+        invitation_id: invitation.id,
+        invitation_person_id: null,
+        person_name: `${invitation.primary_first_name} ${invitation.primary_last_name}`.trim() || invitation.household_name,
+        household: invitation.household_name,
+        email: invitation.email || '',
+        attendance: '',
+        verification_status: ''
+      });
+    }
+  });
+
+  // One row per actual person.
+  const seen = new Set();
+  return rows.filter(person => {
+    const key = person.person_id
+      ? `rsvp-person:${person.person_id}`
+      : `${person.invitation_id || person.rsvp_id || ''}:${normalizedPersonNameV107(person.person_name)}`;
+    if (seen.has(key)) return false;
+    seen.add(key);
+    return true;
+  }).sort((a, b) => a.person_name.localeCompare(b.person_name));
+};
+
+// ------------------------------------------------------------
+// Per-person email in Edit Invitation
+// ------------------------------------------------------------
+
+invitationPeopleForEditV105 = function(invitation) {
+  if (!invitation) return [];
+
+  const stored = invitationPeopleV101(invitation.id);
+  if (stored.length) {
+    return stored.map(person => ({
+      id: person.id,
+      person_name: person.person_name,
+      person_type: person.person_type || 'adult',
+      email: person.email || '',
+      sort_order: Number(person.sort_order || 0)
+    }));
+  }
+
+  return parseInvitationPeopleV101(
+    invitation.household_name,
+    invitation.primary_first_name,
+    invitation.primary_last_name
+  ).map((name, index) => ({
+    id: '',
+    person_name: name,
+    person_type: 'adult',
+    email: '',
+    sort_order: index
+  }));
+};
+
+invitationPersonRowV105 = function(person = {}, index = 0) {
+  return `<div class="invitation-person-row-v107" data-person-id="${esc(person.id || '')}">
+    <label class="field">
+      <span>Person ${index + 1}</span>
+      <input name="invite_person_name" required value="${esc(person.person_name || '')}" placeholder="Full name">
+    </label>
+    <label class="field invitation-person-type-v105">
+      <span>Type</span>
+      <select name="invite_person_type">
+        <option value="adult" ${(person.person_type || 'adult') === 'adult' ? 'selected' : ''}>Adult</option>
+        <option value="child" ${person.person_type === 'child' ? 'selected' : ''}>Child</option>
+      </select>
+    </label>
+    <label class="field">
+      <span>Email</span>
+      <input type="email" name="invite_person_email" value="${esc(person.email || '')}" placeholder="Optional">
+    </label>
+    <button class="danger-text invitation-person-remove-v105" type="button" onclick="removeInvitationPersonRowV105(this)">Remove</button>
+  </div>`;
+};
+
+renumberInvitationPeopleV105 = function() {
+  document.querySelectorAll('#invitation-people-editor-v105 .invitation-person-row-v107').forEach((row, index) => {
+    const label = row.querySelector('.field span');
+    if (label) label.textContent = `Person ${index + 1}`;
+  });
+};
+
+addInvitationPersonRowV105 = function(type = 'adult') {
+  const editor = document.getElementById('invitation-people-editor-v105');
+  if (!editor) return;
+  const index = editor.querySelectorAll('.invitation-person-row-v107').length;
+  editor.insertAdjacentHTML('beforeend', invitationPersonRowV105({ person_type: type, email: '' }, index));
+};
+
+removeInvitationPersonRowV105 = function(button) {
+  const editor = document.getElementById('invitation-people-editor-v105');
+  if (!editor) return;
+  const rows = editor.querySelectorAll('.invitation-person-row-v107');
+  if (rows.length <= 1) return toast('An invitation needs at least one named person.', 'error');
+  button.closest('.invitation-person-row-v107')?.remove();
+  renumberInvitationPeopleV105();
+};
+
+collectInvitationPeopleV105 = function(form) {
+  return [...form.querySelectorAll('#invitation-people-editor-v105 .invitation-person-row-v107')].map((row, index) => ({
+    id: row.dataset.personId || '',
+    person_name: String(row.querySelector('[name="invite_person_name"]')?.value || '').trim(),
+    person_type: String(row.querySelector('[name="invite_person_type"]')?.value || 'adult'),
+    email: String(row.querySelector('[name="invite_person_email"]')?.value || '').trim() || null,
+    sort_order: index
+  }));
+};
+
+saveInvitation = async function(event, id = '') {
+  event.preventDefault();
+
+  const formElement = event.target;
+  const submit = formElement.querySelector('[type="submit"]');
+  if (submit) {
+    submit.disabled = true;
+    submit.textContent = 'Saving…';
+  }
+
+  const form = new FormData(formElement);
+  const people = collectInvitationPeopleV105(formElement);
+
+  if (!people.length || people.some(person => !person.person_name)) {
+    if (submit) {
+      submit.disabled = false;
+      submit.textContent = 'Save Invitation & People';
+    }
+    return toast('Enter a name for every person in the household.', 'error');
+  }
+
+  const primaryPerson = people.find(person => person.person_type === 'adult') || people[0];
+  const primary = splitNameForPrimaryV105(primaryPerson.person_name);
+
+  const payload = {
+    household_name: String(form.get('household_name') || '').trim(),
+    primary_first_name: primary.first,
+    primary_last_name: primary.last,
+    max_guests: Math.max(1, Number(form.get('max_guests') || people.length)),
+    status: String(form.get('status') || 'invited')
+  };
+
+  for (const key of ['phone','email','street_address','city','state','zip_code','private_notes']) {
+    payload[key] = String(form.get(key) || '').trim() || null;
+  }
+
+  if (!payload.household_name) {
+    if (submit) {
+      submit.disabled = false;
+      submit.textContent = 'Save Invitation & People';
+    }
+    return toast('Enter a household name.', 'error');
+  }
+
+  let invitationId = id;
+
+  if (id) {
+    const { error } = await db.from('invitations').update(payload).eq('id', id);
+    if (error) {
+      if (submit) {
+        submit.disabled = false;
+        submit.textContent = 'Save Invitation & People';
+      }
+      return toast(error.message, 'error');
+    }
+  } else {
+    const { data, error } = await db.from('invitations').insert(payload).select('id').single();
+    if (error) {
+      if (submit) {
+        submit.disabled = false;
+        submit.textContent = 'Save Invitation & People';
+      }
+      return toast(error.message, 'error');
+    }
+    invitationId = data.id;
+  }
+
+  const existing = id ? invitationPeopleV101(id) : [];
+  const existingIds = new Set(existing.map(person => person.id));
+  const keptIds = new Set();
+
+  for (const person of people) {
+    if (person.id && existingIds.has(person.id)) {
+      keptIds.add(person.id);
+      const { error } = await db.from('invitation_people').update({
+        person_name: person.person_name,
+        person_type: person.person_type,
+        email: person.email,
+        sort_order: person.sort_order
+      }).eq('id', person.id);
+
+      if (error) return toast(`Invitation saved, but a person could not be updated: ${error.message}`, 'error');
+    } else {
+      const { error } = await db.from('invitation_people').insert({
+        invitation_id: invitationId,
+        person_name: person.person_name,
+        person_type: person.person_type,
+        email: person.email,
+        sort_order: person.sort_order
+      });
+
+      if (error && !String(error.message || '').toLowerCase().includes('duplicate')) {
+        return toast(`Invitation saved, but a person could not be added: ${error.message}`, 'error');
+      }
+    }
+  }
+
+  if (id) {
+    const removeIds = existing
+      .filter(person => !keptIds.has(person.id) && !people.some(newPerson => newPerson.id === person.id))
+      .map(person => person.id);
+
+    if (removeIds.length) {
+      const { error } = await db.from('invitation_people').delete().in('id', removeIds);
+      if (error) return toast(`Invitation saved, but an old household member could not be removed: ${error.message}`, 'error');
+    }
+  } else {
+    // Update any people auto-created by the insert trigger.
+    const { data: generated } = await db
+      .from('invitation_people')
+      .select('*')
+      .eq('invitation_id', invitationId);
+
+    for (const person of people) {
+      const row = (generated || []).find(g =>
+        normalizedPersonNameV107(g.person_name) === normalizedPersonNameV107(person.person_name)
+      );
+      if (row) {
+        await db.from('invitation_people').update({
+          person_type: person.person_type,
+          email: person.email,
+          sort_order: person.sort_order
+        }).eq('id', row.id);
+      }
+    }
+
+    const wantedNames = new Set(people.map(person => normalizedPersonNameV107(person.person_name)));
+    const extras = (generated || []).filter(row => !wantedNames.has(normalizedPersonNameV107(row.person_name)));
+    if (extras.length) await db.from('invitation_people').delete().in('id', extras.map(row => row.id));
+  }
+
+  closeModal();
+  toast(id ? 'Invitation and household people updated.' : 'Invitation and household people added.');
+  await loadAdmin();
+};
+
+// ------------------------------------------------------------
+// Multi-person assignment directly from Wedding Jobs
+// ------------------------------------------------------------
+
+function personAttendanceLabelV107(person) {
+  const attendance = String(person.attendance || '').toLowerCase();
+  if (attendance === 'attending') return 'Attending';
+  if (attendance === 'declined') return 'Not attending';
+  return 'No RSVP yet';
+}
+
+function personAlreadyAssignedToJobV107(person, jobId) {
+  return (adminData.assignments || []).some(assignment =>
+    assignment.job_id === jobId &&
+    (
+      (person.person_id && assignment.rsvp_person_id === person.person_id) ||
+      (!person.person_id &&
+        assignment.invitation_id === person.invitation_id &&
+        normalizedPersonNameV107(assignment.person_name) === normalizedPersonNameV107(person.person_name)) ||
+      (!person.person_id && person.rsvp_id &&
+        assignment.rsvp_id === person.rsvp_id &&
+        normalizedPersonNameV107(assignment.person_name) === normalizedPersonNameV107(person.person_name))
+    )
+  );
+}
+
+function renderJobPeoplePickerRowsV107(jobId, search = '') {
+  const query = String(search || '').trim().toLowerCase();
+  const people = assignmentPeopleV063().filter(person =>
+    !query ||
+    [person.person_name, person.household, person.email]
+      .some(value => String(value || '').toLowerCase().includes(query))
+  );
+
+  if (!people.length) return '<p class="muted job-people-empty-v107">No matching people.</p>';
+
+  const groups = new Map();
+  people.forEach(person => {
+    const household = person.household || 'Other';
+    if (!groups.has(household)) groups.set(household, []);
+    groups.get(household).push(person);
+  });
+
+  return [...groups.entries()].map(([household, members]) => `
+    <section class="job-household-group-v107">
+      <h4>${esc(household)}</h4>
+      ${members.map(person => {
+        const assigned = personAlreadyAssignedToJobV107(person, jobId);
+        const status = personAttendanceLabelV107(person);
+        return `<label class="job-person-check-v107 ${assigned ? 'already-assigned' : ''}">
+          <input type="checkbox" name="job_people_v107" value="${esc(person.key)}" ${assigned ? 'disabled' : ''} onchange="updateJobPeopleSelectedV107()">
+          <span class="job-person-check-copy-v107">
+            <strong>${esc(person.person_name)}</strong>
+            <small>${esc(status)}${person.email ? ` · ${esc(person.email)}` : ' · no email'}${assigned ? ' · already assigned' : ''}</small>
+          </span>
+        </label>`;
+      }).join('')}
+    </section>
+  `).join('');
+}
+
+function filterJobPeopleV107(value) {
+  const jobId = document.getElementById('job-multi-assign-id-v107')?.value || '';
+  const list = document.getElementById('job-people-list-v107');
+  if (!list) return;
+  const checked = new Set(
+    [...document.querySelectorAll('input[name="job_people_v107"]:checked')].map(input => input.value)
+  );
+  list.innerHTML = renderJobPeoplePickerRowsV107(jobId, value);
+  document.querySelectorAll('input[name="job_people_v107"]').forEach(input => {
+    if (checked.has(input.value) && !input.disabled) input.checked = true;
+  });
+  updateJobPeopleSelectedV107();
+}
+
+function updateJobPeopleSelectedV107() {
+  const count = document.querySelectorAll('input[name="job_people_v107"]:checked').length;
+  const label = document.getElementById('job-people-selected-count-v107');
+  if (label) label.textContent = `${count} selected`;
+}
+
+openJobAssignmentDialog = function(jobId) {
+  const job = (adminData.jobs || []).find(item => item.id === jobId);
+  if (!job) return;
+
+  const people = assignmentPeopleV063();
+  if (!people.length) return toast('Add an invitation or RSVP before assigning a job.', 'error');
+
+  const stats = jobStats(job);
+
+  document.body.insertAdjacentHTML('beforeend', `<div class="modal-backdrop" id="modal">
+    <form class="modal-card job-multi-assign-modal-v107" onsubmit="saveJobMultiAssignmentV107(event)">
+      <input type="hidden" id="job-multi-assign-id-v107" name="job_id" value="${esc(job.id)}">
+      <div class="modal-heading">
+        <div><p class="eyebrow">Wedding job</p><h2>Assign People — ${esc(job.title)}</h2></div>
+        <button type="button" onclick="closeModal()">×</button>
+      </div>
+
+      <div class="job-multi-summary-v107">
+        <strong>${stats.filled} of ${stats.needed} filled</strong>
+        <span>${stats.remaining} still needed</span>
+      </div>
+
+      <label class="field wide">
+        <span>Search people or households</span>
+        <input type="search" placeholder="Type a first name, last name, household, or email" oninput="filterJobPeopleV107(this.value)">
+      </label>
+
+      <div class="job-picker-toolbar-v107">
+        <strong id="job-people-selected-count-v107">0 selected</strong>
+        <span>Choose as many people as you need.</span>
+      </div>
+
+      <div id="job-people-list-v107" class="job-people-list-v107">
+        ${renderJobPeoplePickerRowsV107(job.id)}
+      </div>
+
+      <div class="form-grid job-multi-options-v107">
+        <label class="field wide"><span>How should these assignments start?</span>
+          <select name="status">
+            <option value="assigned">Assign without sending email</option>
+            <option value="awaiting_response">Send each person an email request</option>
+            <option value="accepted">They already said yes</option>
+          </select>
+        </label>
+        <label class="field wide"><span>Instructions for everyone selected (optional)</span>
+          <textarea name="instructions" rows="4"></textarea>
+        </label>
+      </div>
+
+      <p class="muted">For email requests, each person uses their own email first, then the RSVP or household email as a fallback.</p>
+
+      <div class="modal-actions">
+        <button type="button" class="secondary" onclick="closeModal()">Cancel</button>
+        <button class="primary" type="submit">Assign Selected People</button>
+      </div>
+    </form>
+  </div>`);
+};
+
+async function saveJobMultiAssignmentV107(event) {
+  event.preventDefault();
+
+  const formElement = event.target;
+  const form = new FormData(formElement);
+  const jobId = String(form.get('job_id') || '');
+  const status = String(form.get('status') || 'assigned');
+  const instructions = String(form.get('instructions') || '').trim() || null;
+  const keys = [...formElement.querySelectorAll('input[name="job_people_v107"]:checked')]
+    .map(input => input.value);
+
+  if (!keys.length) return toast('Choose at least one person.', 'error');
+
+  const allPeople = assignmentPeopleV063();
+  const people = keys.map(key => allPeople.find(person => person.key === key)).filter(Boolean);
+  if (!people.length) return toast('The selected people could not be found. Refresh and try again.', 'error');
+
+  if (status === 'awaiting_response') {
+    const withoutEmail = people.filter(person => !person.email);
+    if (withoutEmail.length) {
+      return toast(`Add an email for: ${withoutEmail.map(person => person.person_name).join(', ')}`, 'error');
+    }
+  }
+
+  const button = formElement.querySelector('[type="submit"]');
+  if (button) {
+    button.disabled = true;
+    button.textContent = `Assigning ${people.length}…`;
+  }
+
+  let saved = 0;
+  let emailFailures = 0;
+  let skipped = 0;
+  const now = new Date().toISOString();
+
+  for (const person of people) {
+    if (personAlreadyAssignedToJobV107(person, jobId)) {
+      skipped += 1;
+      continue;
+    }
+
+    const payload = {
+      job_id: jobId,
+      rsvp_id: person.rsvp_id || null,
+      invitation_id: person.invitation_id || null,
+      rsvp_person_id: person.person_id || null,
+      person_name: person.person_name,
+      contact_email: person.email || null,
+      status,
+      instructions,
+      responded_at: status === 'accepted' ? now : null,
+      response_method: status === 'accepted' ? 'admin' : null
+    };
+
+    const { data, error } = await db
+      .from('job_assignments')
+      .insert(payload)
+      .select('id')
+      .single();
+
+    if (error) {
+      console.error('Could not assign', person.person_name, error);
+      skipped += 1;
+      continue;
+    }
+
+    saved += 1;
+
+    if (status === 'awaiting_response') {
+      const { error: emailError } = await db.functions.invoke('send-job-request', {
+        body: { assignment_id: data.id }
+      });
+      if (emailError) {
+        emailFailures += 1;
+        await db.from('job_assignments').update({ status: 'assigned' }).eq('id', data.id);
+      }
+    }
+  }
+
+  closeModal();
+  await loadAdmin();
+
+  if (!saved) return toast('No new assignments were added.', 'error');
+
+  if (emailFailures) {
+    return toast(`${saved} assigned. ${emailFailures} email request${emailFailures === 1 ? '' : 's'} could not be sent and were saved as Assigned.`, 'error');
+  }
+
+  const skippedText = skipped ? ` ${skipped} already assigned or could not be added.` : '';
+  toast(`${saved} ${saved === 1 ? 'person' : 'people'} assigned.${skippedText}`);
+};
+
+// Make the job-screen call-to-action explicitly multi-person.
+const baseRenderJobDetailV107 = renderJobDetail;
+renderJobDetail = function(job) {
+  let html = baseRenderJobDetailV107(job);
+  html = html.replace(
+    `onclick="openJobAssignmentDialog('${job.id}')">Assign Guest</button>`,
+    `onclick="openJobAssignmentDialog('${job.id}')">Assign People</button>`
+  );
+  return html;
 };
 

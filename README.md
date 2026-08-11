@@ -318,3 +318,15 @@ Run `v1.0.5-household-people-and-duplicate-review.sql` before deploying.
 ## v1.0.6 — Persistent Duplicate Review Fix
 
 No SQL required. Saved **Not a duplicate** decisions are loaded with the initial Command Center data, preventing duplicate warnings from returning after a browser refresh.
+
+
+## v1.0.7 — Reliable Household People, Multi-Assign Jobs, Individual Emails
+
+Run `v1.0.7-person-emails.sql` before deploying.
+
+- Invitation people and RSVP people are loaded with the Command Center's initial data, removing the intermittent missing-household-member behavior.
+- Wedding Jobs can assign multiple people from one searchable household-grouped picker.
+- The picker shows RSVP attendance and whether someone is already assigned.
+- Each invitation person can have their own email.
+- Job requests prefer the individual's email and fall back to RSVP/household email.
+- No job-completed workflow was added.
