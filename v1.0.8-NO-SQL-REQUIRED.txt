@@ -1,0 +1,15 @@
+Jordan & Rochelle Wedding Manager v1.0.8
+
+NO SQL REQUIRED.
+
+Fixes:
+- Wedding Settings are loaded with the initial Command Center data.
+- Saved wedding-day information, parking/directions, registry links, and other settings
+  no longer appear blank because of a late settings request.
+- Administrator rows are loaded with the initial Command Center data.
+- Opening Settings refreshes wedding_settings/admin_users before displaying the form.
+- Administrator email/details refresh no longer clears a previously good list if the
+  Edge Function has a temporary request failure.
+- Adding an administrator refreshes both the admin table and the admin service details.
+
+All v1.0.7 household, job assignment, and individual-email changes remain included.

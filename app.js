@@ -421,7 +421,7 @@ async function loadAdmin() {
     return;
   }
 
-  const [invitations, rsvps, jobs, assignments, registry, photos, duplicateDismissals, invitationPeople, rsvpPeople] = await Promise.all([
+  const [invitations, rsvps, jobs, assignments, registry, photos, duplicateDismissals, invitationPeople, rsvpPeople, settings, adminUsers] = await Promise.all([
     db.from('invitations').select('*').order('household_name', { ascending: true }),
     db.from('rsvps').select('*').order('created_at', { ascending: false }),
     db.from('wedding_jobs').select('*').order('starts_at', { ascending: true, nullsFirst: false }),
@@ -430,10 +430,12 @@ async function loadAdmin() {
     db.from('photos').select('*').order('sort_order', { ascending: true }),
     db.from('duplicate_dismissals').select('*').order('created_at', { ascending: false }),
     db.from('invitation_people').select('*').order('sort_order', { ascending: true }),
-    db.from('rsvp_people').select('*').order('sort_order', { ascending: true })
+    db.from('rsvp_people').select('*').order('sort_order', { ascending: true }),
+    db.from('wedding_settings').select('*').eq('id', 1).maybeSingle(),
+    db.from('admin_users').select('*').order('created_at', { ascending: true })
   ]);
 
-  const firstError = [invitations, rsvps, jobs, assignments, registry, photos, duplicateDismissals, invitationPeople, rsvpPeople].find((result) => result.error)?.error;
+  const firstError = [invitations, rsvps, jobs, assignments, registry, photos, duplicateDismissals, invitationPeople, rsvpPeople, settings, adminUsers].find((result) => result.error)?.error;
   if (firstError) {
     adminError = `${firstError.message} Make sure this account exists in admin_users.`;
   } else {
@@ -442,8 +444,11 @@ async function loadAdmin() {
       assignments: assignments.data || [], registry: registry.data || [], photos: photos.data || [],
       duplicateDismissals: duplicateDismissals.data || [],
       invitationPeople: invitationPeople.data || [],
-      rsvpPeople: rsvpPeople.data || []
+      rsvpPeople: rsvpPeople.data || [],
+      settings: settings.data || {},
+      adminUsers: adminUsers.data || []
     };
+    publicWeddingSettings = settings.data || {};
   }
   loadingAdmin = false;
   render();
@@ -6730,5 +6735,102 @@ renderJobDetail = function(job) {
     `onclick="openJobAssignmentDialog('${job.id}')">Assign People</button>`
   );
   return html;
+};
+
+
+
+
+/* ===== v1.0.8 Settings/Admin reliable loading ===== */
+
+// Settings used to render once before wedding_settings/admin_users were available.
+// They are now part of the initial admin load above. This helper also refreshes
+// the admin email/details service without clearing a previously good result.
+refreshAdminUsersV070 = async function() {
+  if (!session || adminUsersLoadingV070) return;
+
+  adminUsersLoadingV070 = true;
+  render();
+
+  try {
+    const { data, error } = await db.functions.invoke('manage-admin-users', {
+      body: { action: 'list' }
+    });
+
+    if (error) throw error;
+    if (Array.isArray(data?.admins)) adminUserDetailsV070 = data.admins;
+  } catch (error) {
+    console.warn('Could not refresh administrator details.', error);
+    // Keep the last successful administrator details instead of blanking the list.
+  }
+
+  adminUsersLoadingV070 = false;
+  render();
+};
+
+// Opening Settings now refreshes the latest wedding settings and admin rows first,
+// so the form cannot briefly replace saved values with empty/default fields.
+setAdminView = async function(next) {
+  adminView = next;
+
+  if (next !== 'settings') {
+    render();
+    return;
+  }
+
+  if (!db || !session) {
+    render();
+    return;
+  }
+
+  loadingAdmin = true;
+  render();
+
+  const [settingsResult, adminsResult] = await Promise.all([
+    db.from('wedding_settings').select('*').eq('id', 1).maybeSingle(),
+    db.from('admin_users').select('*').order('created_at', { ascending: true })
+  ]);
+
+  if (!settingsResult.error) {
+    adminData.settings = settingsResult.data || {};
+    publicWeddingSettings = settingsResult.data || {};
+  }
+
+  if (!adminsResult.error) {
+    adminData.adminUsers = adminsResult.data || [];
+  }
+
+  loadingAdmin = false;
+  render();
+  await refreshAdminUsersV070();
+};
+
+// After adding/removing an administrator, load the current rows and service
+// details rather than relying on an older in-memory copy.
+const baseInviteAdminV108 = inviteAdminV070;
+inviteAdminV070 = async function(event) {
+  event.preventDefault();
+  const f = new FormData(event.target);
+  const button = event.submitter;
+  if (button) button.disabled = true;
+
+  const { data, error } = await db.functions.invoke('manage-admin-users', {
+    body: {
+      action: 'invite',
+      email: String(f.get('email')).trim(),
+      display_name: String(f.get('display_name')).trim()
+    }
+  });
+
+  if (button) button.disabled = false;
+  if (error || data?.error) {
+    return toast(data?.error || error?.message || 'Could not add administrator.', 'error');
+  }
+
+  closeModal();
+  toast('Administrator added and password link sent.');
+
+  const { data: rows } = await db.from('admin_users').select('*').order('created_at', { ascending: true });
+  adminData.adminUsers = rows || [];
+  await refreshAdminUsersV070();
 };
 
