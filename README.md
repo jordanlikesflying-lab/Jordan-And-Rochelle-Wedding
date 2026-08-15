@@ -330,3 +330,14 @@ Run `v1.0.7-person-emails.sql` before deploying.
 - Each invitation person can have their own email.
 - Job requests prefer the individual's email and fall back to RSVP/household email.
 - No job-completed workflow was added.
+
+
+## v1.0.9 — Registry Link & Gift Photo Patch
+
+Run `v1.0.9-registry-images.sql` before deploying.
+
+- A registry gift with no item/store URL shows no link.
+- Fixes blank URLs accidentally resolving to the wedding website itself.
+- Add/Edit Gift includes a phone/computer **Choose Photo** upload.
+- Gift images preview before saving and are stored in the `registry-images` bucket.
+- Existing image URLs still work as an optional advanced method.

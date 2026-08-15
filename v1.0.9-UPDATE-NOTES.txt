@@ -1,0 +1,15 @@
+Jordan & Rochelle Wedding Manager v1.0.9
+
+RUN FIRST:
+v1.0.9-registry-images.sql
+
+Changes:
+- Gifts with no Store/item URL no longer display any clickable example/store link.
+- Fixes the blank-URL bug that could turn an empty URL into the current website URL.
+- Add/Edit Gift now has a Choose Photo button.
+- Pick a gift image directly from a phone or computer.
+- Shows a preview before saving.
+- Uploaded gift photos are stored in the public registry-images Supabase bucket.
+- Remove Photo clears a gift image.
+- Existing Image URL support remains available as an optional advanced method.
+- Gift quantity and multi-claim behavior remain unchanged.

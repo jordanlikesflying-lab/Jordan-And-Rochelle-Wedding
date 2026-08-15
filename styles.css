@@ -396,3 +396,54 @@ img{max-width:100%}
   .invitation-person-row-v107{grid-template-columns:1fr}
   .job-multi-summary-v107,.job-picker-toolbar-v107{align-items:flex-start;flex-direction:column}
 }
+
+/* v1.0.9 — easy registry gift photos */
+.registry-image-picker-v109{
+  grid-column:1/-1;
+  display:grid;
+  gap:.7rem;
+  padding:.85rem;
+  border:1px solid #eadfd8;
+  border-radius:14px;
+  background:#fffaf6;
+}
+.registry-image-picker-v109>div:first-child{display:grid;gap:.15rem}
+.registry-image-picker-v109 small{color:#75655f}
+.registry-image-preview-v109{
+  min-height:150px;
+  display:flex;
+  align-items:center;
+  justify-content:center;
+  flex-direction:column;
+  gap:.35rem;
+  overflow:hidden;
+  border:1px dashed #d8c5bc;
+  border-radius:12px;
+  background:#fff;
+}
+.registry-image-preview-v109>span{font-size:2rem}
+.registry-image-preview-v109.has-image{
+  border-style:solid;
+  min-height:210px;
+}
+.registry-image-preview-v109 img{
+  display:block;
+  width:100%;
+  max-height:320px;
+  object-fit:contain;
+}
+.registry-image-actions-v109{
+  display:flex;
+  gap:.6rem;
+  flex-wrap:wrap;
+}
+.registry-image-upload-button-v109{
+  display:inline-flex;
+  align-items:center;
+  justify-content:center;
+  cursor:pointer;
+}
+.registry-image-upload-button-v109 input{display:none}
+@media(max-width:620px){
+  .registry-image-actions-v109>*{width:100%}
+}

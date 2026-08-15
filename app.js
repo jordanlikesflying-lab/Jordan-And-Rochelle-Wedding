@@ -6834,3 +6834,229 @@ inviteAdminV070 = async function(event) {
   await refreshAdminUsersV070();
 };
 
+
+
+
+/* ===== v1.0.9 Registry Link + Easy Gift Photos ===== */
+
+const REGISTRY_IMAGE_BUCKET_V109 = 'registry-images';
+
+// A blank URL must stay blank. Previously new URL('', base) turned it into
+// the current page URL, which made gifts without a store link look clickable.
+safeUrl = function(value = '') {
+  const raw = String(value ?? '').trim();
+  if (!raw) return '';
+  try {
+    const url = new URL(raw, window.location.href);
+    return (url.protocol === 'http:' || url.protocol === 'https:') ? url.href : '';
+  } catch {
+    return '';
+  }
+};
+
+function registryImagePreviewV109(input) {
+  const preview = document.getElementById('registry-image-preview-v109');
+  if (!preview) return;
+
+  const file = input?.files?.[0];
+  if (!file) return;
+
+  if (!String(file.type || '').startsWith('image/')) {
+    input.value = '';
+    return toast('Choose an image file.', 'error');
+  }
+
+  if (file.size > 10 * 1024 * 1024) {
+    input.value = '';
+    return toast('Please choose an image smaller than 10 MB.', 'error');
+  }
+
+  const objectUrl = URL.createObjectURL(file);
+  preview.innerHTML = `<img src="${esc(objectUrl)}" alt="Gift photo preview">`;
+  preview.classList.add('has-image');
+}
+
+function clearRegistryImageV109() {
+  const fileInput = document.getElementById('registry-image-file-v109');
+  const urlInput = document.querySelector('#modal input[name="image_url"]');
+  const removeInput = document.getElementById('registry-remove-image-v109');
+  const preview = document.getElementById('registry-image-preview-v109');
+
+  if (fileInput) fileInput.value = '';
+  if (urlInput) urlInput.value = '';
+  if (removeInput) removeInput.value = '1';
+  if (preview) {
+    preview.innerHTML = '<span>🎁</span><small>No gift photo selected</small>';
+    preview.classList.remove('has-image');
+  }
+}
+
+async function uploadRegistryImageV109(file) {
+  if (!file) return '';
+
+  const extension = String(file.name || '').includes('.')
+    ? `.${String(file.name).split('.').pop().replace(/[^a-zA-Z0-9]/g, '').slice(0, 8)}`
+    : '';
+  const path = `gifts/${crypto.randomUUID()}${extension}`;
+
+  const { error } = await db.storage
+    .from(REGISTRY_IMAGE_BUCKET_V109)
+    .upload(path, file, {
+      cacheControl: '3600',
+      upsert: false,
+      contentType: file.type || undefined
+    });
+
+  if (error) throw error;
+
+  const { data } = db.storage
+    .from(REGISTRY_IMAGE_BUCKET_V109)
+    .getPublicUrl(path);
+
+  return data?.publicUrl || '';
+}
+
+// Add the upload UI to the existing registry dialog, while retaining the
+// optional image URL field for imports or externally hosted images.
+const baseOpenRegistryDialogV109 = openRegistryDialog;
+openRegistryDialog = function(id = '') {
+  baseOpenRegistryDialogV109(id);
+
+  const item = id ? (adminData.registry || []).find(entry => entry.id === id) : null;
+  const currentImage = safeUrl(item?.image_url || '');
+  const imageUrlField = document.querySelector('#modal input[name="image_url"]')?.closest('.field');
+
+  if (!imageUrlField || document.getElementById('registry-image-file-v109')) return;
+
+  imageUrlField.querySelector('span').textContent = 'Image URL (optional — advanced)';
+  imageUrlField.insertAdjacentHTML('beforebegin', `
+    <section class="registry-image-picker-v109">
+      <div>
+        <strong>Gift photo</strong>
+        <small>Choose a photo from your phone or computer.</small>
+      </div>
+
+      <div id="registry-image-preview-v109" class="registry-image-preview-v109 ${currentImage ? 'has-image' : ''}">
+        ${currentImage
+          ? `<img src="${esc(currentImage)}" alt="${esc(item?.title || 'Gift photo')}">`
+          : '<span>🎁</span><small>No gift photo selected</small>'}
+      </div>
+
+      <div class="registry-image-actions-v109">
+        <label class="secondary registry-image-upload-button-v109">
+          Choose Photo
+          <input id="registry-image-file-v109" type="file" accept="image/*" onchange="registryImagePreviewV109(this)">
+        </label>
+        <button type="button" class="secondary" onclick="clearRegistryImageV109()">Remove Photo</button>
+      </div>
+      <input id="registry-remove-image-v109" type="hidden" value="0">
+    </section>
+  `);
+};
+
+saveRegistryItem = async function(event) {
+  event.preventDefault();
+
+  const formElement = event.target;
+  const form = new FormData(formElement);
+  const id = String(form.get('registry_id') || '');
+  const itemUrl = String(form.get('item_url') || '').trim();
+  let imageUrl = String(form.get('image_url') || '').trim();
+  const removeImage = document.getElementById('registry-remove-image-v109')?.value === '1';
+  const imageFile = document.getElementById('registry-image-file-v109')?.files?.[0] || null;
+
+  // Blank URLs are valid and intentionally mean "do not show a link."
+  if (itemUrl && !safeUrl(itemUrl)) {
+    return toast('The store link must start with http:// or https://.', 'error');
+  }
+  if (imageUrl && !safeUrl(imageUrl)) {
+    return toast('The image link must start with http:// or https://.', 'error');
+  }
+
+  const quantityWanted = Math.max(1, Number(form.get('quantity_wanted') || 1));
+  const existing = id ? (adminData.registry || []).find(item => item.id === id) : null;
+  const alreadyClaimed = giftClaimedQuantityV101(existing);
+
+  if (quantityWanted < alreadyClaimed) {
+    return toast(`Quantity wanted cannot be lower than the ${alreadyClaimed} already claimed. Release claims first.`, 'error');
+  }
+
+  const submit = formElement.querySelector('[type="submit"]');
+  if (submit) {
+    submit.disabled = true;
+    submit.textContent = imageFile ? 'Uploading Photo…' : 'Saving…';
+  }
+
+  try {
+    if (removeImage) imageUrl = '';
+
+    if (imageFile) {
+      imageUrl = await uploadRegistryImageV109(imageFile);
+      if (!imageUrl) throw new Error('The photo uploaded but no public image URL was returned.');
+    }
+
+    const payload = {
+      title: String(form.get('title') || '').trim(),
+      description: String(form.get('description') || '').trim() || null,
+      store_name: String(form.get('store_name') || '').trim() || null,
+      item_url: itemUrl || null,
+      image_url: imageUrl || null,
+      is_active: form.get('is_active') === 'on',
+      sort_order: Math.max(0, Number(form.get('sort_order') || 0)),
+      quantity_wanted: quantityWanted
+    };
+
+    const result = id
+      ? await db.from('registry_items').update(payload).eq('id', id)
+      : await db.from('registry_items').insert(payload).select('id').single();
+
+    if (result.error) throw result.error;
+
+    if (!id && result.data?.id) selectedRegistryId = result.data.id;
+
+    closeModal();
+    toast(id ? 'Registry item updated.' : 'Registry item added.');
+    await loadAdmin();
+  } catch (error) {
+    if (submit) {
+      submit.disabled = false;
+      submit.textContent = id ? 'Save Changes' : 'Add Item';
+    }
+    toast(error?.message || 'Could not save the registry item.', 'error');
+  }
+};
+
+// Public registry rendering is deliberately explicit: no item URL means
+// there is no link at all — just the claim button and gift information.
+renderPublicRegistryItemV071 = function(item) {
+  const imageUrl = safeUrl(item.image_url);
+  const exampleUrl = safeUrl(item.item_url);
+  const wanted = giftQuantityV101(item);
+  const claimed = giftClaimedQuantityV101(item);
+  const remaining = giftRemainingV101(item);
+  const full = remaining <= 0;
+
+  return `<article class="public-registry-card registry-claim-card-v071 ${full ? 'claimed' : 'available'}">
+    ${imageUrl
+      ? `<div class="registry-image-wrap"><img src="${esc(imageUrl)}" alt="${esc(item.title)}" loading="lazy" onerror="this.parentElement.classList.add('image-failed');this.remove()"></div>`
+      : `<div class="registry-image-wrap registry-image-placeholder">🎁</div>`}
+    <div class="public-registry-copy">
+      <div class="registry-card-status-v071">
+        ${full
+          ? '<span class="gift-claimed-v071">Fully Claimed</span>'
+          : `<span class="gift-available-v071">${remaining} of ${wanted} available</span>`}
+      </div>
+      ${item.store_name ? `<p class="registry-store">Suggested: ${esc(item.store_name)}</p>` : ''}
+      <h3>${esc(item.title)}</h3>
+      ${item.description ? `<p>${esc(item.description)}</p>` : ''}
+      ${wanted > 1 ? `<p class="gift-quantity-note-v101"><strong>Quantity wanted:</strong> ${wanted} · <strong>Claimed:</strong> ${claimed}</p>` : ''}
+      ${full
+        ? `<div class="claimed-message-v071"><strong>All requested quantities are covered.</strong><span>Thank you!</span></div>`
+        : `<button class="primary" onclick="openGiftClaimV071('${item.id}')">I'll Take One</button>`}
+      ${exampleUrl
+        ? `<a class="registry-example-link-v071" href="${esc(exampleUrl)}" target="_blank" rel="noopener noreferrer">View example / idea ↗</a>`
+        : ''}
+    </div>
+  </article>`;
+};
+
