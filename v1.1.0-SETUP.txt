@@ -1,0 +1,15 @@
+Jordan & Rochelle Wedding Manager v1.1.0
+
+NEW FEATURES
+- Built-in Search Similar Photos picker for gift registry items (Pexels).
+- Invitation Sent / Not Sent tracking in Invite List and Edit Invitation.
+
+SETUP ORDER
+1. In Supabase Edge Function Secrets add: PEXELS_API_KEY = your Pexels API key.
+2. Run v1.1.0-invitation-sent-and-image-search.sql in Supabase SQL Editor.
+3. Create/deploy Edge Function named exactly: search-registry-images
+   Use the code in supabase/functions/search-registry-images/index.ts
+4. Deploy the website files to GitHub/Netlify.
+
+SECURITY
+The Pexels key is intentionally NOT stored in app.js, config.js, or any public website file.

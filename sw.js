@@ -1,5 +1,5 @@
-const CACHE='jrw-v1.0.9';
-const SHELL=['/','/index.html','/command-center.html','/styles.css?v=1.0.9','/app.js?v=1.0.9','/icons/wedding-192.png','/icons/wedding-512.png'];
+const CACHE='jrw-v1.1.0';
+const SHELL=['/','/index.html','/command-center.html','/styles.css?v=1.1.0','/app.js?v=1.1.0','/icons/wedding-192.png','/icons/wedding-512.png'];
 self.addEventListener('install',event=>{self.skipWaiting();event.waitUntil(caches.open(CACHE).then(cache=>Promise.allSettled(SHELL.map(url=>cache.add(url)))));});
 self.addEventListener('activate',event=>{event.waitUntil(Promise.all([self.clients.claim(),caches.keys().then(keys=>Promise.all(keys.filter(k=>k!==CACHE).map(k=>caches.delete(k))))]));});
 self.addEventListener('fetch',event=>{

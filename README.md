@@ -341,3 +341,14 @@ Run `v1.0.9-registry-images.sql` before deploying.
 - Add/Edit Gift includes a phone/computer **Choose Photo** upload.
 - Gift images preview before saving and are stored in the `registry-images` bucket.
 - Existing image URLs still work as an optional advanced method.
+
+
+## v1.1.0 — Gift Image Search + Invitation Sent
+
+Run `v1.1.0-invitation-sent-and-image-search.sql`, add the `PEXELS_API_KEY` Edge Function secret, and deploy the `search-registry-images` function before deploying the website files.
+
+- Gift editor can search Pexels from the gift name and choose a result with one click.
+- The Pexels key remains server-side in Supabase Edge Function Secrets.
+- Selected Pexels photos preserve source attribution.
+- Invite List shows Sent / Not Sent and allows one-click toggling.
+- Edit Invitation also contains an Invitation mailed/sent checkbox.

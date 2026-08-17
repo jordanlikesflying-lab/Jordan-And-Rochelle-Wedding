@@ -7060,3 +7060,467 @@ renderPublicRegistryItemV071 = function(item) {
   </article>`;
 };
 
+
+
+
+/* ===== v1.1.0 Built-in Gift Image Search + Invitation Sent Tracking ===== */
+
+let registrySearchResultsV110 = [];
+let registrySearchLoadingV110 = false;
+
+function invitationSentPillV110(item) {
+  return item?.invitation_sent
+    ? '<span class="invite-mail-status-v110 sent">✓ Sent</span>'
+    : '<span class="invite-mail-status-v110 not-sent">Not Sent</span>';
+}
+
+async function toggleInvitationSentV110(id, nextValue) {
+  const item = (adminData.invitations || []).find(row => row.id === id);
+  if (!item) return;
+
+  const { error } = await db.from('invitations').update({ invitation_sent: Boolean(nextValue) }).eq('id', id);
+  if (error) return toast(error.message, 'error');
+
+  item.invitation_sent = Boolean(nextValue);
+  toast(nextValue ? 'Invitation marked sent.' : 'Invitation marked not sent.');
+  render();
+}
+
+// Invite List: make mailed status visible and changeable without opening the household.
+invitationTable = function(items) {
+  if (!items.length) return '<p class="muted">No invitations found.</p>';
+
+  return `<div class="table-wrap"><table>
+    <thead><tr>
+      <th>Household</th>
+      <th>Invitation</th>
+      <th>Primary contact</th>
+      <th>Contact</th>
+      <th>Allowed</th>
+      <th>RSVP Status</th>
+      <th>Actions</th>
+    </tr></thead>
+    <tbody>
+      ${items.map(item => {
+        const reasons = invitationDuplicateReasonsV101(item);
+        return `<tr class="${reasons.length ? 'possible-duplicate-row-v101' : ''}">
+          <td>
+            <strong>${esc(item.household_name)}</strong>
+            ${duplicateBadgeV101(reasons)}
+            ${typeof invitationDuplicateActionV105 === 'function' ? invitationDuplicateActionV105(item) : ''}
+            <br><small>${esc([item.city, item.state].filter(Boolean).join(', '))}</small>
+          </td>
+          <td>
+            <div class="invite-mail-control-v110">
+              ${invitationSentPillV110(item)}
+              <button type="button" class="invite-mail-toggle-v110" onclick="toggleInvitationSentV110('${item.id}', ${item.invitation_sent ? 'false' : 'true'})">
+                ${item.invitation_sent ? 'Mark Not Sent' : 'Mark Sent'}
+              </button>
+            </div>
+          </td>
+          <td>${esc(item.primary_first_name)} ${esc(item.primary_last_name)}</td>
+          <td>${esc(item.phone || item.email || '—')}</td>
+          <td>${item.max_guests}</td>
+          <td>${statusPill(item.status)}</td>
+          <td>
+            <div class="table-actions">
+              <button onclick="openGuestByInvitation('${item.id}')">Profile</button>
+              <button onclick="openInvitationDialog('${item.id}')">Edit</button>
+              <button class="danger-text" onclick="deleteInvitation('${item.id}')">Delete</button>
+            </div>
+          </td>
+        </tr>`;
+      }).join('')}
+    </tbody>
+  </table></div>`;
+};
+
+// Add a Sent/Not Sent control to the existing full household editor.
+const baseOpenInvitationDialogV110 = openInvitationDialog;
+openInvitationDialog = function(id = null) {
+  baseOpenInvitationDialogV110(id);
+  const item = id ? (adminData.invitations || []).find(entry => entry.id === id) : null;
+  const statusField = document.querySelector('#modal select[name="status"]')?.closest('.field');
+  if (!statusField || document.querySelector('#modal input[name="invitation_sent"]')) return;
+
+  statusField.insertAdjacentHTML('afterend', `
+    <label class="field invitation-sent-field-v110">
+      <span>Invitation mailed / sent?</span>
+      <label class="invite-sent-checkbox-v110">
+        <input type="checkbox" name="invitation_sent" ${item?.invitation_sent ? 'checked' : ''}>
+        <span>${item?.invitation_sent ? 'Sent' : 'Not sent yet'}</span>
+      </label>
+    </label>
+  `);
+
+  const checkbox = document.querySelector('#modal input[name="invitation_sent"]');
+  checkbox?.addEventListener('change', () => {
+    const label = checkbox.closest('.invite-sent-checkbox-v110')?.querySelector('span');
+    if (label) label.textContent = checkbox.checked ? 'Sent' : 'Not sent yet';
+  });
+};
+
+// Preserve all v1.0.7 people/email behavior while saving the sent flag too.
+saveInvitation = async function(event, id = '') {
+  event.preventDefault();
+
+  const formElement = event.target;
+  const submit = formElement.querySelector('[type="submit"]');
+  if (submit) {
+    submit.disabled = true;
+    submit.textContent = 'Saving…';
+  }
+
+  const form = new FormData(formElement);
+  const people = collectInvitationPeopleV105(formElement);
+
+  if (!people.length || people.some(person => !person.person_name)) {
+    if (submit) {
+      submit.disabled = false;
+      submit.textContent = 'Save Invitation & People';
+    }
+    return toast('Enter a name for every person in the household.', 'error');
+  }
+
+  const primaryPerson = people.find(person => person.person_type === 'adult') || people[0];
+  const primary = splitNameForPrimaryV105(primaryPerson.person_name);
+
+  const payload = {
+    household_name: String(form.get('household_name') || '').trim(),
+    primary_first_name: primary.first,
+    primary_last_name: primary.last,
+    max_guests: Math.max(1, Number(form.get('max_guests') || people.length)),
+    status: String(form.get('status') || 'invited'),
+    invitation_sent: form.get('invitation_sent') === 'on'
+  };
+
+  for (const key of ['phone','email','street_address','city','state','zip_code','private_notes']) {
+    payload[key] = String(form.get(key) || '').trim() || null;
+  }
+
+  if (!payload.household_name) {
+    if (submit) {
+      submit.disabled = false;
+      submit.textContent = 'Save Invitation & People';
+    }
+    return toast('Enter a household name.', 'error');
+  }
+
+  let invitationId = id;
+
+  if (id) {
+    const { error } = await db.from('invitations').update(payload).eq('id', id);
+    if (error) {
+      if (submit) {
+        submit.disabled = false;
+        submit.textContent = 'Save Invitation & People';
+      }
+      return toast(error.message, 'error');
+    }
+  } else {
+    const { data, error } = await db.from('invitations').insert(payload).select('id').single();
+    if (error) {
+      if (submit) {
+        submit.disabled = false;
+        submit.textContent = 'Save Invitation & People';
+      }
+      return toast(error.message, 'error');
+    }
+    invitationId = data.id;
+  }
+
+  const existing = id ? invitationPeopleV101(id) : [];
+  const existingIds = new Set(existing.map(person => person.id));
+  const keptIds = new Set();
+
+  for (const person of people) {
+    if (person.id && existingIds.has(person.id)) {
+      keptIds.add(person.id);
+      const { error } = await db.from('invitation_people').update({
+        person_name: person.person_name,
+        person_type: person.person_type,
+        email: person.email,
+        sort_order: person.sort_order
+      }).eq('id', person.id);
+
+      if (error) return toast(`Invitation saved, but a person could not be updated: ${error.message}`, 'error');
+    } else {
+      const { error } = await db.from('invitation_people').insert({
+        invitation_id: invitationId,
+        person_name: person.person_name,
+        person_type: person.person_type,
+        email: person.email,
+        sort_order: person.sort_order
+      });
+
+      if (error && !String(error.message || '').toLowerCase().includes('duplicate')) {
+        return toast(`Invitation saved, but a person could not be added: ${error.message}`, 'error');
+      }
+    }
+  }
+
+  if (id) {
+    const removeIds = existing
+      .filter(person => !keptIds.has(person.id) && !people.some(newPerson => newPerson.id === person.id))
+      .map(person => person.id);
+
+    if (removeIds.length) {
+      const { error } = await db.from('invitation_people').delete().in('id', removeIds);
+      if (error) return toast(`Invitation saved, but an old household member could not be removed: ${error.message}`, 'error');
+    }
+  } else {
+    const { data: generated } = await db
+      .from('invitation_people')
+      .select('*')
+      .eq('invitation_id', invitationId);
+
+    for (const person of people) {
+      const row = (generated || []).find(g =>
+        normalizedPersonNameV107(g.person_name) === normalizedPersonNameV107(person.person_name)
+      );
+      if (row) {
+        await db.from('invitation_people').update({
+          person_type: person.person_type,
+          email: person.email,
+          sort_order: person.sort_order
+        }).eq('id', row.id);
+      }
+    }
+
+    const wantedNames = new Set(people.map(person => normalizedPersonNameV107(person.person_name)));
+    const extras = (generated || []).filter(row => !wantedNames.has(normalizedPersonNameV107(row.person_name)));
+    if (extras.length) await db.from('invitation_people').delete().in('id', extras.map(row => row.id));
+  }
+
+  closeModal();
+  toast(id ? 'Invitation and household people updated.' : 'Invitation and household people added.');
+  await loadAdmin();
+};
+
+function registryPhotoSearchMarkupV110(item) {
+  return `<section class="registry-photo-search-v110">
+    <div class="registry-photo-search-heading-v110">
+      <div>
+        <strong>Search Similar Photos</strong>
+        <small>Search Pexels using the gift name, then click a photo to use it.</small>
+      </div>
+    </div>
+    <div class="registry-photo-search-row-v110">
+      <input id="registry-photo-search-query-v110" type="search" value="${esc(item?.title || '')}" placeholder="Example: Dutch oven" onkeydown="if(event.key==='Enter'){event.preventDefault();searchRegistryPhotosV110();}">
+      <button type="button" class="secondary" onclick="searchRegistryPhotosV110()">Search Similar Photos</button>
+    </div>
+    <div id="registry-photo-search-results-v110" class="registry-photo-search-results-v110"></div>
+    <div class="registry-pexels-credit-v110">Photos provided by <a href="https://www.pexels.com" target="_blank" rel="noopener noreferrer">Pexels</a></div>
+    <input type="hidden" name="image_credit" value="${esc(item?.image_credit || '')}">
+    <input type="hidden" name="image_source_url" value="${esc(item?.image_source_url || '')}">
+    <input type="hidden" id="registry-selected-search-image-v110" value="${esc(item?.image_url || '')}">
+  </section>`;
+}
+
+const baseOpenRegistryDialogV110 = openRegistryDialog;
+openRegistryDialog = function(id = '') {
+  baseOpenRegistryDialogV110(id);
+  const item = id ? (adminData.registry || []).find(entry => entry.id === id) : null;
+  const picker = document.querySelector('#modal .registry-image-picker-v109');
+  if (!picker || document.querySelector('#modal .registry-photo-search-v110')) return;
+
+  picker.insertAdjacentHTML('afterend', registryPhotoSearchMarkupV110(item));
+};
+
+function renderRegistryPhotoResultsV110() {
+  const target = document.getElementById('registry-photo-search-results-v110');
+  if (!target) return;
+
+  if (registrySearchLoadingV110) {
+    target.innerHTML = '<div class="loading-card">Searching photos…</div>';
+    return;
+  }
+
+  if (!registrySearchResultsV110.length) {
+    target.innerHTML = '<p class="muted">No photos loaded yet.</p>';
+    return;
+  }
+
+  target.innerHTML = registrySearchResultsV110.map((photo, index) => `
+    <button type="button" class="registry-search-photo-v110" onclick="chooseRegistrySearchPhotoV110(${index})">
+      <img src="${esc(photo.thumb || photo.image)}" alt="${esc(photo.alt || 'Gift photo option')}" loading="lazy">
+      <span>Use this photo</span>
+      <small>Photo by ${esc(photo.photographer || 'Pexels photographer')}</small>
+    </button>
+  `).join('');
+}
+
+async function searchRegistryPhotosV110() {
+  const queryInput = document.getElementById('registry-photo-search-query-v110');
+  const query = String(queryInput?.value || document.querySelector('#modal input[name="title"]')?.value || '').trim();
+  if (!query) return toast('Enter a gift name or photo search.', 'error');
+
+  registrySearchLoadingV110 = true;
+  registrySearchResultsV110 = [];
+  renderRegistryPhotoResultsV110();
+
+  try {
+    const { data, error } = await db.functions.invoke('search-registry-images', {
+      body: { query }
+    });
+
+    if (error) throw error;
+    if (data?.error) throw new Error(data.error);
+
+    registrySearchResultsV110 = Array.isArray(data?.photos) ? data.photos : [];
+    registrySearchLoadingV110 = false;
+    renderRegistryPhotoResultsV110();
+
+    if (!registrySearchResultsV110.length) toast('No similar photos found. Try a simpler search.', 'error');
+  } catch (error) {
+    registrySearchLoadingV110 = false;
+    registrySearchResultsV110 = [];
+    const target = document.getElementById('registry-photo-search-results-v110');
+    if (target) target.innerHTML = '<p class="error">Photo search is unavailable right now.</p>';
+    toast(error?.message || 'Could not search photos.', 'error');
+  }
+}
+
+function chooseRegistrySearchPhotoV110(index) {
+  const photo = registrySearchResultsV110[index];
+  if (!photo) return;
+
+  const urlInput = document.querySelector('#modal input[name="image_url"]');
+  const creditInput = document.querySelector('#modal input[name="image_credit"]');
+  const sourceInput = document.querySelector('#modal input[name="image_source_url"]');
+  const selectedInput = document.getElementById('registry-selected-search-image-v110');
+  const removeInput = document.getElementById('registry-remove-image-v109');
+  const fileInput = document.getElementById('registry-image-file-v109');
+  const preview = document.getElementById('registry-image-preview-v109');
+
+  if (urlInput) urlInput.value = photo.image || '';
+  if (creditInput) creditInput.value = photo.photographer ? `Photo by ${photo.photographer} on Pexels` : 'Photo from Pexels';
+  if (sourceInput) sourceInput.value = photo.pexels_url || '';
+  if (selectedInput) selectedInput.value = photo.image || '';
+  if (removeInput) removeInput.value = '0';
+  if (fileInput) fileInput.value = '';
+
+  if (preview) {
+    preview.innerHTML = `<img src="${esc(photo.image || photo.thumb)}" alt="${esc(photo.alt || 'Selected gift photo')}">`;
+    preview.classList.add('has-image');
+  }
+
+  toast('Photo selected. Save the gift when you are ready.');
+}
+
+// Keep Pexels attribution tied only to the exact search-selected image.
+saveRegistryItem = async function(event) {
+  event.preventDefault();
+
+  const formElement = event.target;
+  const form = new FormData(formElement);
+  const id = String(form.get('registry_id') || '');
+  const itemUrl = String(form.get('item_url') || '').trim();
+  let imageUrl = String(form.get('image_url') || '').trim();
+  const removeImage = document.getElementById('registry-remove-image-v109')?.value === '1';
+  const imageFile = document.getElementById('registry-image-file-v109')?.files?.[0] || null;
+
+  if (itemUrl && !safeUrl(itemUrl)) return toast('The store link must start with http:// or https://.', 'error');
+  if (imageUrl && !safeUrl(imageUrl)) return toast('The image link must start with http:// or https://.', 'error');
+
+  const quantityWanted = Math.max(1, Number(form.get('quantity_wanted') || 1));
+  const existing = id ? (adminData.registry || []).find(item => item.id === id) : null;
+  const alreadyClaimed = giftClaimedQuantityV101(existing);
+
+  if (quantityWanted < alreadyClaimed) {
+    return toast(`Quantity wanted cannot be lower than the ${alreadyClaimed} already claimed. Release claims first.`, 'error');
+  }
+
+  const submit = formElement.querySelector('[type="submit"]');
+  if (submit) {
+    submit.disabled = true;
+    submit.textContent = imageFile ? 'Uploading Photo…' : 'Saving…';
+  }
+
+  try {
+    let imageCredit = String(form.get('image_credit') || '').trim() || null;
+    let imageSourceUrl = String(form.get('image_source_url') || '').trim() || null;
+    const selectedSearchImage = String(document.getElementById('registry-selected-search-image-v110')?.value || '').trim();
+
+    if (removeImage) {
+      imageUrl = '';
+      imageCredit = null;
+      imageSourceUrl = null;
+    }
+
+    if (imageFile) {
+      imageUrl = await uploadRegistryImageV109(imageFile);
+      if (!imageUrl) throw new Error('The photo uploaded but no public image URL was returned.');
+      imageCredit = null;
+      imageSourceUrl = null;
+    } else if (imageUrl !== selectedSearchImage) {
+      // A manually pasted image URL should not inherit old Pexels credit.
+      imageCredit = null;
+      imageSourceUrl = null;
+    }
+
+    const payload = {
+      title: String(form.get('title') || '').trim(),
+      description: String(form.get('description') || '').trim() || null,
+      store_name: String(form.get('store_name') || '').trim() || null,
+      item_url: itemUrl || null,
+      image_url: imageUrl || null,
+      image_credit: imageCredit,
+      image_source_url: imageSourceUrl,
+      is_active: form.get('is_active') === 'on',
+      sort_order: Math.max(0, Number(form.get('sort_order') || 0)),
+      quantity_wanted: quantityWanted
+    };
+
+    const result = id
+      ? await db.from('registry_items').update(payload).eq('id', id)
+      : await db.from('registry_items').insert(payload).select('id').single();
+
+    if (result.error) throw result.error;
+    if (!id && result.data?.id) selectedRegistryId = result.data.id;
+
+    closeModal();
+    toast(id ? 'Registry item updated.' : 'Registry item added.');
+    await loadAdmin();
+  } catch (error) {
+    if (submit) {
+      submit.disabled = false;
+      submit.textContent = id ? 'Save Changes' : 'Add Item';
+    }
+    toast(error?.message || 'Could not save the registry item.', 'error');
+  }
+};
+
+// Show photo attribution only when the selected search image supplied it.
+renderPublicRegistryItemV071 = function(item) {
+  const imageUrl = safeUrl(item.image_url);
+  const exampleUrl = safeUrl(item.item_url);
+  const sourceUrl = safeUrl(item.image_source_url);
+  const wanted = giftQuantityV101(item);
+  const claimed = giftClaimedQuantityV101(item);
+  const remaining = giftRemainingV101(item);
+  const full = remaining <= 0;
+
+  return `<article class="public-registry-card registry-claim-card-v071 ${full ? 'claimed' : 'available'}">
+    ${imageUrl
+      ? `<div class="registry-image-wrap"><img src="${esc(imageUrl)}" alt="${esc(item.title)}" loading="lazy" onerror="this.parentElement.classList.add('image-failed');this.remove()"></div>`
+      : `<div class="registry-image-wrap registry-image-placeholder">🎁</div>`}
+    <div class="public-registry-copy">
+      <div class="registry-card-status-v071">
+        ${full
+          ? '<span class="gift-claimed-v071">Fully Claimed</span>'
+          : `<span class="gift-available-v071">${remaining} of ${wanted} available</span>`}
+      </div>
+      ${item.store_name ? `<p class="registry-store">Suggested: ${esc(item.store_name)}</p>` : ''}
+      <h3>${esc(item.title)}</h3>
+      ${item.description ? `<p>${esc(item.description)}</p>` : ''}
+      ${wanted > 1 ? `<p class="gift-quantity-note-v101"><strong>Quantity wanted:</strong> ${wanted} · <strong>Claimed:</strong> ${claimed}</p>` : ''}
+      ${full
+        ? `<div class="claimed-message-v071"><strong>All requested quantities are covered.</strong><span>Thank you!</span></div>`
+        : `<button class="primary" onclick="openGiftClaimV071('${item.id}')">I'll Take One</button>`}
+      ${exampleUrl ? `<a class="registry-example-link-v071" href="${esc(exampleUrl)}" target="_blank" rel="noopener noreferrer">View example / idea ↗</a>` : ''}
+      ${item.image_credit ? `<small class="registry-photo-credit-v110">${sourceUrl ? `<a href="${esc(sourceUrl)}" target="_blank" rel="noopener noreferrer">${esc(item.image_credit)}</a>` : esc(item.image_credit)}</small>` : ''}
+    </div>
+  </article>`;
+};
+

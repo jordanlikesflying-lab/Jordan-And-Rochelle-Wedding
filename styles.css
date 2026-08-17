@@ -447,3 +447,30 @@ img{max-width:100%}
 @media(max-width:620px){
   .registry-image-actions-v109>*{width:100%}
 }
+
+/* v1.1.0 — invitation sent tracking */
+.invite-mail-control-v110{display:flex;flex-direction:column;align-items:flex-start;gap:.35rem;min-width:105px}
+.invite-mail-status-v110{display:inline-flex;align-items:center;border-radius:999px;padding:.25rem .55rem;font-size:.78rem;font-weight:700;white-space:nowrap}
+.invite-mail-status-v110.sent{background:#e7f3ea;color:#315f3c}
+.invite-mail-status-v110.not-sent{background:#f3ece7;color:#795f53}
+.invite-mail-toggle-v110{border:0;background:transparent;padding:0;color:#6f5147;text-decoration:underline;font-size:.78rem;cursor:pointer}
+.invitation-sent-field-v110{align-self:end}
+.invite-sent-checkbox-v110{display:flex;align-items:center;gap:.5rem;min-height:44px;padding:.55rem .7rem;border:1px solid #dfd0c9;border-radius:10px;background:#fff}
+
+/* v1.1.0 — Pexels registry image picker */
+.registry-photo-search-v110{grid-column:1/-1;display:grid;gap:.75rem;padding:.9rem;border:1px solid #e6d9d2;border-radius:14px;background:#fff}
+.registry-photo-search-heading-v110{display:flex;justify-content:space-between;gap:1rem;align-items:flex-start}
+.registry-photo-search-heading-v110>div{display:grid;gap:.18rem}
+.registry-photo-search-heading-v110 small,.registry-pexels-credit-v110{color:#75655f}
+.registry-photo-search-row-v110{display:grid;grid-template-columns:1fr auto;gap:.55rem}
+.registry-photo-search-row-v110 input{width:100%;min-width:0;border:1px solid #d9cac3;border-radius:10px;padding:.7rem .8rem;font:inherit}
+.registry-photo-search-results-v110{display:grid;grid-template-columns:repeat(3,minmax(0,1fr));gap:.65rem}
+.registry-search-photo-v110{display:flex;flex-direction:column;gap:.3rem;text-align:left;border:1px solid #e2d5cf;border-radius:12px;background:#fff;padding:.45rem;overflow:hidden;cursor:pointer}
+.registry-search-photo-v110:hover{transform:translateY(-1px);box-shadow:0 7px 18px rgba(53,39,34,.08)}
+.registry-search-photo-v110 img{width:100%;aspect-ratio:4/3;object-fit:cover;border-radius:8px;background:#f4efec}
+.registry-search-photo-v110 span{font-weight:700;color:#5f453c}
+.registry-search-photo-v110 small{color:#786963;overflow:hidden;text-overflow:ellipsis;white-space:nowrap;width:100%}
+.registry-pexels-credit-v110 a,.registry-photo-credit-v110 a{color:inherit;text-decoration:underline}
+.registry-photo-credit-v110{display:block;margin-top:.55rem;color:#7a6b65}
+@media(max-width:720px){.registry-photo-search-row-v110{grid-template-columns:1fr}.registry-photo-search-results-v110{grid-template-columns:repeat(2,minmax(0,1fr))}}
+@media(max-width:430px){.registry-photo-search-results-v110{grid-template-columns:1fr}}
