@@ -7524,3 +7524,778 @@ renderPublicRegistryItemV071 = function(item) {
   </article>`;
 };
 
+
+
+
+/* ===== v1.1.1 RSVP + Reliability Update ===== */
+
+// Public RSVP form:
+// - Address and phone are encouraged, but are no longer browser-required.
+// - Children's names are optional. The child count remains authoritative.
+// - Adult names remain required so the main adult attendees can be identified.
+renderRsvp = function() {
+  if (!booleanSettingV070('rsvp_open', true)) {
+    return `<main class="content-page">${mainMenuButton()}<div class="page-heading"><p class="eyebrow">RSVP</p><h2>RSVPs are currently closed</h2><p>${esc(settingV070('rsvp_closed_message', 'Please contact Jordan or Rochelle if you need to make or change an RSVP.'))}</p></div></main>`;
+  }
+
+  return `<main class="content-page">${mainMenuButton()}<div class="page-heading"><p class="eyebrow">Please respond</p>
+    <h2>Wedding RSVP</h2><p>Please tell us who is coming. Children's names may be left blank if you only know the number coming.</p></div>
+    <form class="rsvp-form" onsubmit="submitRsvpV062(event)">
+      <h3>Main contact</h3><div class="form-grid">
+        ${field('First name', 'first_name', true)}
+        ${field('Last name', 'last_name', true)}
+        ${field('Street address', 'street_address', false, true)}
+        ${field('City', 'city', false)}
+        ${field('State', 'state', false)}
+        ${field('ZIP code', 'zip_code', false)}
+        ${field('Phone number', 'phone', false)}
+        ${field('Email', 'email', false)}
+      </div>
+      <h3>Will you attend?</h3><div class="choice-row">
+        <label><input type="radio" name="attendance" value="attending" checked onchange="updatePeopleFields()"> Yes, I’ll be there</label>
+        <label><input type="radio" name="attendance" value="declined" onchange="updatePeopleFields()"> Sorry, I can’t make it</label>
+      </div>
+      <div id="people-builder">
+        <div class="form-grid">
+          ${numberField('Number of adults', 'adult_count', 1)}
+          ${numberField('Number of children', 'child_count', 0)}
+        </div>
+        <div id="named-people"></div>
+      </div>
+      <label class="field wide"><span>Notes, allergies, or special needs</span><textarea name="notes" rows="4"></textarea></label>
+      <div id="rsvp-message"></div><button class="primary" type="submit">Submit RSVP</button>
+    </form></main>`;
+};
+
+updatePeopleFields = function() {
+  const form = document.querySelector('.rsvp-form');
+  if (!form) return;
+
+  const attending = form.querySelector('input[name="attendance"]:checked')?.value === 'attending';
+  const builder = document.getElementById('people-builder');
+  if (builder) builder.style.display = attending ? '' : 'none';
+  if (!attending) return;
+
+  const adults = Math.max(1, Number(form.elements.adult_count?.value || 1));
+  const children = Math.max(0, Number(form.elements.child_count?.value || 0));
+  const first = form.elements.first_name?.value || '';
+  const last = form.elements.last_name?.value || '';
+
+  // Preserve anything already typed when the count changes.
+  const oldValues = {};
+  form.querySelectorAll('#named-people input').forEach(input => oldValues[input.name] = input.value);
+
+  let fields = `<h3>Names of people attending</h3>
+    <p class="muted">Adult names are required. Children's names can be left blank — the child count above is what we use for the total.</p>
+    <div class="people-name-grid">`;
+
+  for (let i = 0; i < adults; i++) {
+    const fallback = i === 0 ? `${first} ${last}`.trim() : '';
+    const value = oldValues[`adult_name_${i}`] ?? fallback;
+    fields += `<label class="field"><span>Adult ${i + 1}</span><input name="adult_name_${i}" required value="${esc(value)}" placeholder="Full name"></label>`;
+  }
+
+  for (let i = 0; i < children; i++) {
+    const value = oldValues[`child_name_${i}`] ?? '';
+    fields += `<label class="field"><span>Child ${i + 1}</span><input name="child_name_${i}" value="${esc(value)}" placeholder="Child's name"></label>`;
+  }
+
+  fields += `</div>`;
+  const target = document.getElementById('named-people');
+  if (target) target.innerHTML = fields;
+};
+
+submitRsvpV062 = async function(event) {
+  event.preventDefault();
+
+  const button = event.target.querySelector('button[type=submit]');
+  const message = document.getElementById('rsvp-message');
+
+  if (!configured) {
+    message.innerHTML = '<p class="error">The RSVP system has not been connected yet.</p>';
+    return;
+  }
+
+  button.disabled = true;
+  button.textContent = 'Submitting…';
+  message.innerHTML = '';
+
+  const form = new FormData(event.target);
+  const attendance = String(form.get('attendance') || '');
+  const adultCount = attendance === 'attending' ? Math.max(1, Number(form.get('adult_count') || 1)) : 0;
+  const childCount = attendance === 'attending' ? Math.max(0, Number(form.get('child_count') || 0)) : 0;
+
+  const people = [];
+
+  if (attendance === 'attending') {
+    for (let i = 0; i < adultCount; i++) {
+      const name = String(form.get(`adult_name_${i}`) || '').trim();
+      if (!name) {
+        button.disabled = false;
+        button.textContent = 'Submit RSVP';
+        message.innerHTML = '<p class="error">Please enter the name of each adult attending.</p>';
+        return;
+      }
+      people.push({ person_name: name, person_type: 'adult', sort_order: i });
+    }
+
+    // Child names are deliberately optional. Blank rows are not inserted,
+    // but child_count still records the complete number attending.
+    for (let i = 0; i < childCount; i++) {
+      const name = String(form.get(`child_name_${i}`) || '').trim();
+      if (name) {
+        people.push({ person_name: name, person_type: 'child', sort_order: adultCount + i });
+      }
+    }
+  }
+
+  const email = String(form.get('email') || '').trim() || null;
+  const additionalGuests = people.slice(1).map(person => person.person_name).join(', ') || null;
+  const notes = String(form.get('notes') || '').trim() || null;
+
+  let result;
+  try {
+    result = await db.rpc('submit_public_rsvp', {
+      p_first_name: String(form.get('first_name') || '').trim(),
+      p_last_name: String(form.get('last_name') || '').trim(),
+      p_street_address: String(form.get('street_address') || '').trim(),
+      p_city: String(form.get('city') || '').trim(),
+      p_state: String(form.get('state') || '').trim(),
+      p_zip_code: String(form.get('zip_code') || '').trim(),
+      p_phone: String(form.get('phone') || '').trim(),
+      p_email: email,
+      p_attendance: attendance,
+      p_adult_count: adultCount,
+      p_child_count: childCount,
+      p_additional_guests: additionalGuests,
+      p_notes: notes
+    });
+  } catch (networkError) {
+    console.error('Public RSVP network error:', networkError);
+    button.disabled = false;
+    button.textContent = 'Submit RSVP';
+    message.innerHTML = '<p class="error">We could not connect to the RSVP service. Please check your connection and try again.</p>';
+    return;
+  }
+
+  const rsvpId = result?.data;
+  const error = result?.error;
+
+  if (error) {
+    console.error('Public RSVP submission failed:', error);
+    button.disabled = false;
+    button.textContent = 'Submit RSVP';
+
+    const raw = String(error.message || '');
+    const friendly = raw.includes('RSVPs are currently closed')
+      ? 'RSVPs are currently closed. Please contact Jordan or Rochelle if you need to make or change an RSVP.'
+      : raw.includes('First and last name are required')
+        ? 'Please enter your first and last name.'
+        : 'We could not save your RSVP. Please try again.';
+
+    message.innerHTML = `<p class="error">${esc(friendly)}</p>`;
+    return;
+  }
+
+  if (!rsvpId) {
+    button.disabled = false;
+    button.textContent = 'Submit RSVP';
+    message.innerHTML = '<p class="error">We could not save your RSVP. Please try again.</p>';
+    return;
+  }
+
+  if (people.length) {
+    const { error: peopleError } = await db
+      .from('rsvp_people')
+      .insert(people.map(person => ({ ...person, rsvp_id: rsvpId })));
+
+    if (peopleError) {
+      // The RSVP itself is already safely stored, so do not tell the guest
+      // that the whole RSVP failed.
+      console.error('RSVP saved but attendee names failed:', peopleError);
+    }
+  }
+
+  if (email) sendRsvpConfirmationV063(rsvpId);
+
+  const confirmation = String(rsvpId).split('-')[0].toUpperCase();
+  event.target.outerHTML = `<div class="success-card"><div class="big-icon">♥</div><h2>Thank you!</h2>
+    <p>Your RSVP has been received.</p>
+    <p class="muted">Confirmation: <strong>${esc(confirmation)}</strong></p>
+    ${email ? '<p class="muted">We’ll also send an acknowledgement to the email address you provided.</p>' : ''}
+    ${mainMenuButton()}</div>`;
+};
+
+
+// RSVP Review: make it easy to see every submission and enter one for someone
+// who tells Jordan or Rochelle directly.
+function openAdminRsvpDialogV111() {
+  const invitations = [...(adminData.invitations || [])]
+    .filter(i => i.status !== 'cancelled')
+    .sort((a, b) => String(a.household_name || '').localeCompare(String(b.household_name || '')));
+
+  const options = invitations.map(inv =>
+    `<option value="${esc(inv.id)}">${esc(inv.household_name)}</option>`
+  ).join('');
+
+  document.body.insertAdjacentHTML('beforeend', `<div class="modal-backdrop" id="modal">
+    <form class="modal-card modal-wide-v071" onsubmit="saveAdminRsvpV111(event)">
+      <div class="modal-heading"><div><p class="eyebrow">Entered by you</p><h2>Create RSVP</h2></div><button type="button" onclick="closeModal()">×</button></div>
+      <p class="muted">Use this when someone tells you directly that they are or are not coming.</p>
+
+      <div class="form-grid">
+        <label class="field wide"><span>Invitation household</span>
+          <select name="invitation_id" onchange="fillAdminRsvpFromInvitationV111(this.value)">
+            <option value="">Not linked to an invitation</option>
+            ${options}
+          </select>
+        </label>
+
+        <label class="field"><span>First name</span><input name="first_name" required></label>
+        <label class="field"><span>Last name</span><input name="last_name" required></label>
+
+        <label class="field wide"><span>Attendance</span>
+          <select name="attendance" onchange="toggleAdminRsvpCountsV111(this.value)">
+            <option value="attending">Attending</option>
+            <option value="declined">Not attending</option>
+          </select>
+        </label>
+
+        <label class="field"><span>Number of adults</span><input type="number" name="adult_count" min="0" max="30" value="1" required></label>
+        <label class="field"><span>Number of children</span><input type="number" name="child_count" min="0" max="30" value="0" required></label>
+
+        <label class="field wide"><span>Other adult names</span><textarea name="adult_names" rows="2" placeholder="One per line or separated by commas"></textarea></label>
+        <label class="field wide"><span>Children's names</span><textarea name="child_names" rows="2" placeholder="Leave blank if you only know how many children are coming"></textarea></label>
+
+        <label class="field"><span>Phone number</span><input name="phone"></label>
+        <label class="field"><span>Email</span><input type="email" name="email"></label>
+        <label class="field wide"><span>Street address</span><input name="street_address"></label>
+        <label class="field"><span>City</span><input name="city"></label>
+        <label class="field"><span>State</span><input name="state"></label>
+        <label class="field"><span>ZIP code</span><input name="zip_code"></label>
+
+        <label class="field wide"><span>Notes</span><textarea name="notes" rows="3"></textarea></label>
+      </div>
+
+      <div class="modal-actions"><button type="button" class="secondary" onclick="closeModal()">Cancel</button><button class="primary" type="submit">Save RSVP</button></div>
+    </form>
+  </div>`);
+}
+
+function fillAdminRsvpFromInvitationV111(invitationId) {
+  const inv = (adminData.invitations || []).find(i => i.id === invitationId);
+  const form = document.querySelector('#modal form');
+  if (!inv || !form) return;
+
+  form.elements.first_name.value = inv.primary_first_name || '';
+  form.elements.last_name.value = inv.primary_last_name || '';
+  form.elements.phone.value = inv.phone || '';
+  form.elements.email.value = inv.email || '';
+  form.elements.street_address.value = inv.street_address || '';
+  form.elements.city.value = inv.city || '';
+  form.elements.state.value = inv.state || '';
+  form.elements.zip_code.value = inv.zip_code || '';
+
+  const maxGuests = Math.max(1, Number(inv.max_guests || 1));
+  form.elements.adult_count.value = Math.min(2, maxGuests);
+}
+
+function toggleAdminRsvpCountsV111(attendance) {
+  const form = document.querySelector('#modal form');
+  if (!form) return;
+  const attending = attendance === 'attending';
+  ['adult_count', 'child_count', 'adult_names', 'child_names'].forEach(name => {
+    if (form.elements[name]) form.elements[name].disabled = !attending;
+  });
+}
+
+function splitNamesV111(value) {
+  return String(value || '')
+    .split(/[\n,]+/)
+    .map(v => v.trim())
+    .filter(Boolean);
+}
+
+async function saveAdminRsvpV111(event) {
+  event.preventDefault();
+
+  const formElement = event.target;
+  const form = new FormData(formElement);
+  const invitationId = String(form.get('invitation_id') || '') || null;
+  const attendance = String(form.get('attendance') || 'attending');
+
+  let adultCount = attendance === 'attending' ? Math.max(1, Number(form.get('adult_count') || 1)) : 0;
+  let childCount = attendance === 'attending' ? Math.max(0, Number(form.get('child_count') || 0)) : 0;
+
+  if (invitationId) {
+    const existing = (adminData.rsvps || []).filter(r =>
+      r.invitation_id === invitationId && r.verification_status !== 'rejected'
+    );
+    if (existing.length && !confirm('This household already has an RSVP. Save another response anyway?')) return;
+  }
+
+  const firstName = String(form.get('first_name') || '').trim();
+  const lastName = String(form.get('last_name') || '').trim();
+  const extraAdults = attendance === 'attending' ? splitNamesV111(form.get('adult_names')) : [];
+  const namedChildren = attendance === 'attending' ? splitNamesV111(form.get('child_names')) : [];
+
+  const payload = {
+    invitation_id: invitationId,
+    first_name: firstName,
+    last_name: lastName,
+    street_address: String(form.get('street_address') || '').trim(),
+    city: String(form.get('city') || '').trim(),
+    state: String(form.get('state') || '').trim(),
+    zip_code: String(form.get('zip_code') || '').trim(),
+    phone: String(form.get('phone') || '').trim(),
+    email: String(form.get('email') || '').trim() || null,
+    attendance,
+    adult_count: adultCount,
+    child_count: childCount,
+    additional_guests: [...extraAdults, ...namedChildren].join(', ') || null,
+    notes: String(form.get('notes') || '').trim() || null,
+    verification_status: 'verified',
+    submitted_by_admin: true
+  };
+
+  const submit = formElement.querySelector('[type="submit"]');
+  if (submit) { submit.disabled = true; submit.textContent = 'Saving…'; }
+
+  const { data, error } = await db.from('rsvps').insert(payload).select('id').single();
+
+  if (error) {
+    if (submit) { submit.disabled = false; submit.textContent = 'Save RSVP'; }
+    return toast(error.message, 'error');
+  }
+
+  const people = [];
+  if (attendance === 'attending') {
+    people.push({ rsvp_id: data.id, person_name: `${firstName} ${lastName}`.trim(), person_type: 'adult', sort_order: 0 });
+
+    extraAdults.slice(0, Math.max(0, adultCount - 1)).forEach((name, index) => {
+      people.push({ rsvp_id: data.id, person_name: name, person_type: 'adult', sort_order: index + 1 });
+    });
+
+    namedChildren.slice(0, childCount).forEach((name, index) => {
+      people.push({ rsvp_id: data.id, person_name: name, person_type: 'child', sort_order: adultCount + index });
+    });
+  }
+
+  if (people.length) {
+    const { error: peopleError } = await db.from('rsvp_people').insert(people);
+    if (peopleError) console.error('Admin RSVP attendee names could not be saved:', peopleError);
+  }
+
+  if (invitationId) {
+    await db.from('invitations').update({
+      status: attendance === 'attending' ? 'responded' : 'declined'
+    }).eq('id', invitationId);
+  }
+
+  closeModal();
+  toast('RSVP created.');
+  reviewModeV071 = 'all';
+  selectedReviewId = data.id;
+  await loadAdmin();
+}
+
+const setReviewModeV071BeforeV111 = setReviewModeV071;
+setReviewModeV071 = function(mode) {
+  reviewModeV071 = mode === 'reviewed' ? 'reviewed' : (mode === 'all' ? 'all' : 'pending');
+  selectedReviewId = null;
+  reviewSearch = '';
+  render();
+};
+
+renderReviewV071 = function() {
+  const pending = needsReview();
+  const reviewed = reviewedRsvpsV071();
+  const all = [...(adminData.rsvps || [])].sort((a, b) =>
+    String(b.created_at || '').localeCompare(String(a.created_at || ''))
+  );
+
+  const source = reviewModeV071 === 'reviewed'
+    ? reviewed
+    : reviewModeV071 === 'all'
+      ? all
+      : pending;
+
+  const query = reviewSearch.trim().toLowerCase();
+  const filtered = query ? source.filter(item => reviewMatchesV071(item, query)) : source;
+
+  if (!selectedReviewId || !filtered.some(item => item.id === selectedReviewId)) {
+    selectedReviewId = filtered[0]?.id || null;
+  }
+
+  const selected = filtered.find(item => item.id === selectedReviewId);
+
+  const tabs = `<div class="review-tabs-v071">
+    <button class="${reviewModeV071 === 'pending' ? 'active' : ''}" onclick="setReviewModeV071('pending')">Needs Review <span>${pending.length}</span></button>
+    <button class="${reviewModeV071 === 'all' ? 'active' : ''}" onclick="setReviewModeV071('all')">All RSVPs <span>${all.length}</span></button>
+    <button class="${reviewModeV071 === 'reviewed' ? 'active' : ''}" onclick="setReviewModeV071('reviewed')">Reviewed <span>${reviewed.length}</span></button>
+  </div>`;
+
+  let body = '';
+  if (!source.length && reviewModeV071 === 'pending') {
+    body = `<div class="empty-state admin-empty"><div class="big-icon">✓</div><h2>All caught up</h2>
+      <p>There are no new RSVP submissions waiting for approval.</p>
+      <button class="primary" onclick="setReviewModeV071('all')">View All RSVPs</button></div>`;
+  } else if (!source.length) {
+    body = `<div class="empty-state admin-empty"><h2>No RSVPs in this view</h2></div>`;
+  } else {
+    body = `<div class="review-toolbar">
+      <input type="search" value="${esc(reviewSearch)}" placeholder="Search RSVPs" oninput="setReviewSearch(this.value)">
+      <span>${filtered.length} of ${source.length}</span>
+    </div>
+    <div class="review-split">
+      <aside class="review-queue">${filtered.length ? filtered.map(item => {
+        const invitation = item.invitation_id ? adminData.invitations.find(i => i.id === item.invitation_id) : null;
+        return `<button class="queue-item ${item.id === selectedReviewId ? 'active' : ''}" onclick="selectReview('${item.id}')">
+          <strong>${esc(item.first_name)} ${esc(item.last_name)}</strong>
+          <span>${titleCase(item.attendance)} · ${formatDate(item.created_at)}</span>
+          <small>${item.submitted_by_admin ? 'Entered by admin' : esc(invitation?.household_name || titleCase(item.verification_status))}</small>
+        </button>`;
+      }).join('') : '<p class="muted queue-empty">No matching RSVPs.</p>'}</aside>
+      <section class="review-detail">${selected ? renderReviewDetailV071(selected) : '<div class="empty-state admin-empty"><h2>No response selected</h2></div>'}</section>
+    </div>`;
+  }
+
+  return `<div class="admin-view">
+    <div class="view-heading">
+      <div><p class="eyebrow">Guest responses</p><h1>RSVP Review</h1><p>Every submitted RSVP is available under All RSVPs, including responses that were automatically matched before this update.</p></div>
+      <div class="rsvp-heading-actions-v111">
+        <button class="secondary" onclick="loadAdmin()">Refresh</button>
+        <button class="primary" onclick="openAdminRsvpDialogV111()">Create RSVP</button>
+      </div>
+    </div>
+    ${tabs}${body}
+  </div>`;
+};
+
+// Make incomplete child naming obvious without reducing the headcount.
+const renderReviewDetailBeforeV111 = renderReviewDetailV071;
+renderReviewDetailV071 = function(rsvp) {
+  let html = renderReviewDetailBeforeV111(rsvp);
+  if (rsvp.attendance !== 'attending') return html;
+
+  const people = rsvpPeopleV071(rsvp.id);
+  const namedChildren = people.filter(p => p.person_type === 'child').length;
+  const unnamedChildren = Math.max(0, Number(rsvp.child_count || 0) - namedChildren);
+
+  if (unnamedChildren > 0) {
+    const note = `<p class="unnamed-children-note-v111"><strong>${unnamedChildren} ${unnamedChildren === 1 ? 'child is' : 'children are'} included in the attendance count without ${unnamedChildren === 1 ? 'a name' : 'names'}.</strong></p>`;
+    html = html.replace('</section>', `${note}</section>`);
+  }
+
+  return html;
+};
+
+
+// Login / connection reliability.
+// Retry only transient connection failures; bad passwords still return immediately.
+function transientConnectionErrorV111(error) {
+  const text = String(error?.message || error || '').toLowerCase();
+  return [
+    'failed to fetch', 'network', 'connection', 'timeout', 'timed out',
+    'load failed', 'fetch', '503', '502', '504'
+  ].some(term => text.includes(term));
+}
+
+function waitV111(ms) {
+  return new Promise(resolve => setTimeout(resolve, ms));
+}
+
+adminLogin = async function(event) {
+  event.preventDefault();
+
+  const formElement = event.target;
+  const form = new FormData(formElement);
+  const message = document.getElementById('login-message');
+  const button = formElement.querySelector('[type="submit"]');
+
+  message.innerHTML = '';
+  if (button) { button.disabled = true; button.textContent = 'Signing In…'; }
+
+  let lastError = null;
+
+  for (let attempt = 0; attempt < 3; attempt++) {
+    try {
+      const { data, error } = await db.auth.signInWithPassword({
+        email: String(form.get('email') || '').trim(),
+        password: String(form.get('password') || '')
+      });
+
+      if (!error && data?.session) {
+        session = data.session;
+        if (button) { button.disabled = false; button.textContent = 'Sign In'; }
+        await loadAdmin();
+        return;
+      }
+
+      lastError = error || new Error('No login session was returned.');
+      if (!transientConnectionErrorV111(lastError)) break;
+    } catch (error) {
+      lastError = error;
+      if (!transientConnectionErrorV111(error)) break;
+    }
+
+    if (attempt < 2) {
+      message.innerHTML = '<p class="muted">Connection was interrupted. Trying again…</p>';
+      await waitV111(700 * (attempt + 1));
+    }
+  }
+
+  if (button) { button.disabled = false; button.textContent = 'Sign In'; }
+
+  const friendly = transientConnectionErrorV111(lastError)
+    ? 'We could not reach the sign-in service after retrying. Please check your connection and try once more.'
+    : String(lastError?.message || 'Could not sign in.');
+
+  message.innerHTML = `<p class="error">${esc(friendly)}</p>`;
+};
+
+const loadAdminBeforeV111 = loadAdmin;
+loadAdmin = async function() {
+  for (let attempt = 0; attempt < 3; attempt++) {
+    await loadAdminBeforeV111();
+
+    if (!adminError || !transientConnectionErrorV111(adminError)) return;
+
+    if (attempt < 2) {
+      adminError = '';
+      await waitV111(650 * (attempt + 1));
+    }
+  }
+};
+
+
+
+
+/* ===== v1.1.2 Simpler RSVP -> Invitation Merge ===== */
+
+function invitationAvailableForRsvpMergeV112(invitation, rsvpId) {
+  if (!invitation || invitation.status === 'cancelled') return false;
+
+  return !(adminData.rsvps || []).some(other =>
+    other.id !== rsvpId &&
+    other.invitation_id === invitation.id &&
+    other.verification_status !== 'rejected'
+  );
+}
+
+function invitationSearchTextV112(invitation) {
+  const people = typeof invitationPeopleV101 === 'function'
+    ? invitationPeopleV101(invitation.id).map(p => p.person_name).join(' ')
+    : '';
+
+  return [
+    invitation.household_name,
+    invitation.primary_first_name,
+    invitation.primary_last_name,
+    invitation.phone,
+    invitation.email,
+    invitation.city,
+    invitation.state,
+    people
+  ].map(v => String(v || '').toLowerCase()).join(' ');
+}
+
+function availableInvitationsForRsvpMergeV112(rsvp) {
+  const last = String(rsvp?.last_name || '').trim().toLowerCase();
+
+  return (adminData.invitations || [])
+    .filter(invitation => invitationAvailableForRsvpMergeV112(invitation, rsvp.id))
+    .sort((a, b) => {
+      const score = item => {
+        let value = 0;
+        if (String(item.primary_last_name || '').trim().toLowerCase() === last) value += 5;
+        if (String(item.household_name || '').toLowerCase().includes(last)) value += 3;
+        if (item.id === rsvp.invitation_id) value += 10;
+        return value;
+      };
+      return score(b) - score(a) ||
+        String(a.household_name || '').localeCompare(String(b.household_name || ''));
+    });
+}
+
+function renderRsvpMergeHouseholdsV112(rsvpId, query = '') {
+  const rsvp = (adminData.rsvps || []).find(r => r.id === rsvpId);
+  const list = document.getElementById('rsvp-merge-households-v112');
+  const count = document.getElementById('rsvp-merge-count-v112');
+  if (!rsvp || !list) return;
+
+  const q = String(query || '').trim().toLowerCase();
+  const available = availableInvitationsForRsvpMergeV112(rsvp);
+  const filtered = q
+    ? available.filter(invitation => invitationSearchTextV112(invitation).includes(q))
+    : available;
+
+  if (count) count.textContent = `${filtered.length} available`;
+
+  if (!filtered.length) {
+    list.innerHTML = `<div class="merge-household-empty-v112">
+      <strong>No available household matches that search.</strong>
+      <span>Households already linked to another RSVP are hidden automatically.</span>
+    </div>`;
+    return;
+  }
+
+  const selectedId = document.querySelector('#modal input[name="invitation_id"]')?.value || '';
+
+  list.innerHTML = filtered.map(invitation => {
+    const people = typeof invitationPeopleV101 === 'function'
+      ? invitationPeopleV101(invitation.id).map(p => p.person_name).filter(Boolean)
+      : [];
+
+    const names = people.length
+      ? people.join(', ')
+      : `${invitation.primary_first_name || ''} ${invitation.primary_last_name || ''}`.trim();
+
+    return `<button type="button"
+      class="merge-household-choice-v112 ${selectedId === invitation.id ? 'selected' : ''}"
+      onclick="selectRsvpMergeHouseholdV112('${rsvp.id}','${invitation.id}')">
+      <span>
+        <strong>${esc(invitation.household_name || names || 'Invitation')}</strong>
+        <small>${esc(names || 'No individual names listed')}</small>
+      </span>
+      <b>${invitation.id === rsvp.invitation_id ? 'Current' : 'Choose'}</b>
+    </button>`;
+  }).join('');
+}
+
+function filterRsvpMergeHouseholdsV112(rsvpId, value) {
+  renderRsvpMergeHouseholdsV112(rsvpId, value);
+}
+
+function selectRsvpMergeHouseholdV112(rsvpId, invitationId) {
+  const input = document.querySelector('#modal input[name="invitation_id"]');
+  if (input) input.value = invitationId;
+
+  const rsvp = (adminData.rsvps || []).find(r => r.id === rsvpId);
+  const invitation = (adminData.invitations || []).find(i => i.id === invitationId);
+
+  const target = document.getElementById('merge-rsvp-preview-v112');
+  if (target && rsvp && invitation) {
+    const people = typeof invitationPeopleV101 === 'function'
+      ? invitationPeopleV101(invitation.id).map(p => p.person_name).filter(Boolean)
+      : [];
+
+    target.innerHTML = `<div class="merge-selected-v112">
+      <span>Selected household</span>
+      <strong>${esc(invitation.household_name)}</strong>
+      <small>${esc(people.join(', ') || `${invitation.primary_first_name || ''} ${invitation.primary_last_name || ''}`.trim())}</small>
+    </div>`;
+  }
+
+  const search = document.getElementById('rsvp-merge-search-v112');
+  renderRsvpMergeHouseholdsV112(rsvpId, search?.value || '');
+}
+
+openMergeRsvpDialogV071 = function(rsvpId) {
+  const rsvp = (adminData.rsvps || []).find(r => r.id === rsvpId);
+  if (!rsvp) return;
+
+  const available = availableInvitationsForRsvpMergeV112(rsvp);
+  if (!available.length) {
+    return toast('There are no unused invitation households available to merge with this RSVP.', 'error');
+  }
+
+  const initial = available.find(i => i.id === rsvp.invitation_id) || available[0];
+
+  document.body.insertAdjacentHTML('beforeend', `<div class="modal-backdrop" id="modal">
+    <form class="modal-card modal-wide-v071" onsubmit="saveMergeRsvpV071(event,'${rsvp.id}')">
+      <input type="hidden" name="invitation_id" value="${esc(initial.id)}">
+      <input type="hidden" name="contact_source" value="rsvp">
+
+      <div class="modal-heading">
+        <div><p class="eyebrow">Connect RSVP</p><h2>Choose Invitation Household</h2></div>
+        <button type="button" onclick="closeModal()">×</button>
+      </div>
+
+      <div class="merge-rsvp-person-v112">
+        <span>RSVP from</span>
+        <strong>${esc(rsvp.first_name)} ${esc(rsvp.last_name)}</strong>
+        <small>${rsvp.adult_count || 0} adult${Number(rsvp.adult_count || 0) === 1 ? '' : 's'} · ${rsvp.child_count || 0} child${Number(rsvp.child_count || 0) === 1 ? '' : 'ren'}</small>
+      </div>
+
+      <label class="field wide">
+        <span>Search invitation households</span>
+        <input id="rsvp-merge-search-v112" type="search"
+          placeholder="Search household or person's name"
+          oninput="filterRsvpMergeHouseholdsV112('${rsvp.id}',this.value)">
+      </label>
+
+      <div class="merge-household-list-heading-v112">
+        <small>Households already connected to another RSVP are hidden.</small>
+        <span id="rsvp-merge-count-v112"></span>
+      </div>
+
+      <div id="rsvp-merge-households-v112" class="merge-household-list-v112"></div>
+
+      <div id="merge-rsvp-preview-v112">
+        <div class="merge-selected-v112">
+          <span>Selected household</span>
+          <strong>${esc(initial.household_name)}</strong>
+          <small>${esc(
+            (typeof invitationPeopleV101 === 'function'
+              ? invitationPeopleV101(initial.id).map(p => p.person_name).join(', ')
+              : '') ||
+            `${initial.primary_first_name || ''} ${initial.primary_last_name || ''}`.trim()
+          )}</small>
+        </div>
+      </div>
+
+      <p class="merge-note-v071">The RSVP will be verified and connected to this household. Any blank invitation contact fields can be filled from the RSVP without erasing existing information.</p>
+
+      <div class="modal-actions">
+        <button type="button" class="secondary" onclick="closeModal()">Cancel</button>
+        <button class="primary" type="submit">Connect RSVP</button>
+      </div>
+    </form>
+  </div>`);
+
+  renderRsvpMergeHouseholdsV112(rsvp.id, '');
+  setTimeout(() => document.getElementById('rsvp-merge-search-v112')?.focus(), 0);
+};
+
+// Keep the same safe database merge, but give simpler messages.
+saveMergeRsvpV071 = async function(event, rsvpId) {
+  event.preventDefault();
+
+  const form = new FormData(event.target);
+  const invitationId = String(form.get('invitation_id') || '');
+
+  if (!invitationId) {
+    return toast('Choose an invitation household first.', 'error');
+  }
+
+  const invitation = (adminData.invitations || []).find(i => i.id === invitationId);
+  if (!invitationAvailableForRsvpMergeV112(invitation, rsvpId)) {
+    return toast('That household is already connected to another RSVP. Choose a different household.', 'error');
+  }
+
+  const button = event.submitter;
+  if (button) {
+    button.disabled = true;
+    button.textContent = 'Connecting…';
+  }
+
+  const { error } = await db.rpc('merge_rsvp_into_invitation', {
+    p_rsvp_id: rsvpId,
+    p_invitation_id: invitationId,
+    p_contact_source: 'rsvp'
+  });
+
+  if (error) {
+    if (button) {
+      button.disabled = false;
+      button.textContent = 'Connect RSVP';
+    }
+    return toast(error.message, 'error');
+  }
+
+  closeModal();
+  toast('RSVP connected to the invitation household.');
+  await loadAdmin();
+};
+

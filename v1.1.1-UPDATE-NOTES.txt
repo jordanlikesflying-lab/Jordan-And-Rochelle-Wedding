@@ -1,0 +1,23 @@
+Jordan & Rochelle Wedding Manager v1.1.1
+
+RUN:
+v1.1.1-rsvp-and-reliability.sql
+
+This migration includes the v1.1.0 invitation-sent/image-search columns too,
+so it is safe to use even if v1.1.0 SQL was not run yet.
+
+Changes:
+- Public RSVP phone and address fields are no longer required.
+- Phone/address labels do NOT say "optional".
+- Children's names may be left blank while child_count remains accurate.
+- Adult names remain required for attending adults.
+- Public RSVP success screen includes a short confirmation number.
+- Every new public RSVP now goes to Needs Review, even when it matches an invitation.
+- RSVP Review now has Needs Review, All RSVPs, and Reviewed views.
+- Added Create RSVP button in RSVP Review for phone/in-person responses.
+- Admin-created RSVPs are verified immediately and can link to an invitation.
+- Admin-created RSVP counts do not require every child to be named.
+- Unnamed children are called out in RSVP detail while still included in totals.
+- Sign-in retries transient connection failures up to two additional times.
+- Command Center loading retries transient connection failures.
+- Keeps all v1.1.0 image search and Invitation Sent features.

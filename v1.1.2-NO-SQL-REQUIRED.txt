@@ -1,0 +1,12 @@
+Jordan & Rochelle Wedding Manager v1.1.2
+
+NO SQL REQUIRED.
+
+RSVP -> Invitation merge improvements:
+- Search box for household/person names.
+- Invitation households already linked to another non-rejected RSVP are hidden.
+- The currently linked household remains available when editing an existing match.
+- Household search also checks individual invitation people, email, phone, city, and state.
+- Simplified merge screen: choose household, review selection, Connect RSVP.
+- RSVP contact information fills blank invitation contact fields without erasing existing values.
+- All v1.1.1 RSVP/reliability changes and v1.1.0 image-search/invitation-sent changes remain included.

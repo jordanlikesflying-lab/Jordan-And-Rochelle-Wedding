@@ -474,3 +474,117 @@ img{max-width:100%}
 .registry-photo-credit-v110{display:block;margin-top:.55rem;color:#7a6b65}
 @media(max-width:720px){.registry-photo-search-row-v110{grid-template-columns:1fr}.registry-photo-search-results-v110{grid-template-columns:repeat(2,minmax(0,1fr))}}
 @media(max-width:430px){.registry-photo-search-results-v110{grid-template-columns:1fr}}
+
+/* v1.1.1 — RSVP review/admin entry */
+.rsvp-heading-actions-v111{
+  display:flex;
+  gap:.6rem;
+  flex-wrap:wrap;
+  align-items:center;
+}
+.unnamed-children-note-v111{
+  margin:.75rem 0 0;
+  padding:.7rem .85rem;
+  border-radius:10px;
+  background:#fff7e8;
+  color:#6a574c;
+  font-size:.92rem;
+}
+@media(max-width:620px){
+  .rsvp-heading-actions-v111{
+    width:100%;
+  }
+  .rsvp-heading-actions-v111 button{
+    flex:1 1 auto;
+  }
+}
+
+/* v1.1.2 — simpler RSVP merge */
+.merge-rsvp-person-v112{
+  display:grid;
+  gap:.15rem;
+  padding:.8rem 1rem;
+  margin-bottom:.8rem;
+  border-radius:12px;
+  background:#fff8f3;
+  border:1px solid #eadfd8;
+}
+.merge-rsvp-person-v112 span,
+.merge-selected-v112 span{
+  font-size:.78rem;
+  text-transform:uppercase;
+  letter-spacing:.06em;
+  color:#8a746b;
+}
+.merge-rsvp-person-v112 strong,
+.merge-selected-v112 strong{
+  font-size:1.08rem;
+}
+.merge-household-list-heading-v112{
+  display:flex;
+  align-items:center;
+  justify-content:space-between;
+  gap:.8rem;
+  margin:.25rem 0 .45rem;
+  color:#75655f;
+}
+.merge-household-list-v112{
+  display:grid;
+  gap:.45rem;
+  max-height:340px;
+  overflow:auto;
+  padding:.1rem;
+}
+.merge-household-choice-v112{
+  width:100%;
+  display:flex;
+  justify-content:space-between;
+  align-items:center;
+  gap:1rem;
+  text-align:left;
+  padding:.8rem .9rem;
+  border:1px solid #e6d9d1;
+  border-radius:11px;
+  background:#fff;
+}
+.merge-household-choice-v112:hover,
+.merge-household-choice-v112.selected{
+  border-color:#9c7768;
+  background:#fff8f3;
+}
+.merge-household-choice-v112 span{
+  display:grid;
+  gap:.12rem;
+}
+.merge-household-choice-v112 small{
+  color:#76665f;
+}
+.merge-household-choice-v112 b{
+  font-size:.8rem;
+  white-space:nowrap;
+}
+.merge-household-empty-v112{
+  display:grid;
+  gap:.25rem;
+  padding:1rem;
+  border:1px dashed #d8c5bc;
+  border-radius:11px;
+  color:#6f6059;
+}
+.merge-selected-v112{
+  display:grid;
+  gap:.12rem;
+  margin-top:.8rem;
+  padding:.8rem 1rem;
+  border-radius:12px;
+  background:#f7f2ee;
+}
+@media(max-width:620px){
+  .merge-household-choice-v112{
+    align-items:flex-start;
+  }
+  .merge-household-list-heading-v112{
+    align-items:flex-start;
+    flex-direction:column;
+  }
+}
