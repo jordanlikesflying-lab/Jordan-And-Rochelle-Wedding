@@ -8299,3 +8299,177 @@ saveMergeRsvpV071 = async function(event, rsvpId) {
   await loadAdmin();
 };
 
+
+
+
+/* ===== v1.1.3 RSVP Duplicate Review Cleanup ===== */
+
+function rsvpDuplicateMatchesV113(rsvp) {
+  if (!rsvp) return [];
+
+  const mine = duplicateKeysForRsvpV101(rsvp);
+  const matches = [];
+
+  (adminData.rsvps || [])
+    .filter(other =>
+      other.id !== rsvp.id &&
+      other.verification_status !== 'rejected' &&
+      !duplicatePairDismissedV105('rsvp', rsvp.id, other.id)
+    )
+    .forEach(other => {
+      const theirs = duplicateKeysForRsvpV101(other);
+      const reasons = [];
+
+      if (mine.person && theirs.person && mine.person === theirs.person) reasons.push('same guest name');
+      if (mine.email && theirs.email && mine.email === theirs.email) reasons.push('same email');
+      if (mine.phone && theirs.phone && mine.phone === theirs.phone) reasons.push('same phone');
+      if (mine.invitation && theirs.invitation && mine.invitation === theirs.invitation) reasons.push('same linked invitation');
+
+      if (reasons.length) {
+        matches.push({ rsvp: other, reasons: [...new Set(reasons)] });
+      }
+    });
+
+  return matches;
+}
+
+// Use persistent duplicate dismissals for RSVPs too.
+rsvpDuplicateReasonsV101 = function(rsvp) {
+  return [...new Set(rsvpDuplicateMatchesV113(rsvp).flatMap(match => match.reasons))];
+};
+
+function openRsvpDuplicateReviewV113(rsvpId) {
+  const rsvp = (adminData.rsvps || []).find(item => item.id === rsvpId);
+  if (!rsvp) return;
+
+  const matches = rsvpDuplicateMatchesV113(rsvp);
+
+  document.body.insertAdjacentHTML('beforeend', `<div class="modal-backdrop" id="modal">
+    <div class="modal-card modal-wide-v071">
+      <div class="modal-heading">
+        <div><p class="eyebrow">Duplicate check</p><h2>Review Possible Duplicate</h2></div>
+        <button type="button" onclick="closeModal()">×</button>
+      </div>
+
+      <div class="duplicate-review-current-v113">
+        <span>Current RSVP</span>
+        <strong>${esc(rsvp.first_name)} ${esc(rsvp.last_name)}</strong>
+        <small>${esc(rsvp.phone || rsvp.email || 'No contact information')}</small>
+      </div>
+
+      ${matches.length
+        ? `<div class="duplicate-review-list-v105">
+          ${matches.map(match => {
+            const other = match.rsvp;
+            const linked = other.invitation_id
+              ? (adminData.invitations || []).find(i => i.id === other.invitation_id)
+              : null;
+
+            return `<article class="duplicate-review-item-v105">
+              <div>
+                <strong>${esc(other.first_name)} ${esc(other.last_name)}</strong>
+                <span>${esc(match.reasons.join(' · '))}</span>
+                <small>${esc(other.phone || other.email || 'No contact information')}${linked ? ` · ${esc(linked.household_name)}` : ''}</small>
+              </div>
+              <button class="secondary" onclick="verifyRsvpNotDuplicateV113('${rsvp.id}','${other.id}')">Verify Not Duplicate</button>
+            </article>`;
+          }).join('')}
+        </div>`
+        : `<div class="empty-state"><h3>No unresolved duplicate warnings</h3><p>This RSVP has been verified or no longer matches another response.</p></div>`}
+
+      <div class="modal-actions">
+        <button class="primary" type="button" onclick="closeModal()">Done</button>
+      </div>
+    </div>
+  </div>`);
+}
+
+async function verifyRsvpNotDuplicateV113(leftId, rightId) {
+  if (!confirm('Verify that these are two different RSVPs? The possible-duplicate warning will stay dismissed.')) return;
+
+  const { error } = await db.rpc('dismiss_duplicate_pair', {
+    p_entity_type: 'rsvp',
+    p_left_id: leftId,
+    p_right_id: rightId
+  });
+
+  if (error) return toast(error.message, 'error');
+
+  toast('Verified as separate RSVPs.');
+  closeModal();
+  await loadAdmin();
+}
+
+// Add an action right beside the RSVP duplicate warning.
+const renderReviewDetailBeforeV113 = renderReviewDetailV071;
+renderReviewDetailV071 = function(rsvp) {
+  let html = renderReviewDetailBeforeV113(rsvp);
+  const reasons = rsvpDuplicateReasonsV101(rsvp);
+
+  if (reasons.length && html.includes('duplicate-warning-v101')) {
+    html = html.replace(
+      /(<div class="duplicate-warning-v101">[\s\S]*?<span>[\s\S]*?<\/span>)(<\/div>)/,
+      `$1<button type="button" class="duplicate-review-button-v105" onclick="openRsvpDuplicateReviewV113('${rsvp.id}')">Review / Verify</button>$2`
+    );
+  }
+
+  // Change the old duplicate-specific delete wording to a normal RSVP delete action.
+  html = html
+    .replace('<strong>Duplicate RSVP?</strong>', '<strong>Delete RSVP?</strong>')
+    .replace('Delete only this RSVP record. The invitation household will stay in place.', 'Delete this RSVP record. The invitation household will stay in place.')
+    .replace('>Delete Duplicate RSVP</button>', '>Delete RSVP</button>');
+
+  return html;
+};
+
+// Guest Profile also gets the review/verify action when its RSVP is flagged.
+const renderGuestProfileBeforeV113 = renderGuestProfile;
+renderGuestProfile = function(record) {
+  let html = renderGuestProfileBeforeV113(record);
+  if (!record?.rsvp) return html;
+
+  const reasons = rsvpDuplicateReasonsV101(record.rsvp);
+  if (reasons.length && html.includes('duplicate-warning-v101')) {
+    html = html.replace(
+      /(<div class="duplicate-warning-v101">[\s\S]*?<span>[\s\S]*?<\/span>)(<\/div>)/,
+      `$1<button type="button" class="duplicate-review-button-v105" onclick="event.stopPropagation();openRsvpDuplicateReviewV113('${record.rsvp.id}')">Review / Verify</button>$2`
+    );
+  }
+  return html;
+};
+
+// Keep the existing safe deletion RPC; only simplify the user-facing wording.
+deleteDuplicateRsvpV072 = async function(rsvpId) {
+  const rsvp = (adminData.rsvps || []).find(r => r.id === rsvpId);
+  if (!rsvp) return;
+
+  const invitation = rsvp.invitation_id
+    ? (adminData.invitations || []).find(i => i.id === rsvp.invitation_id)
+    : null;
+
+  const people = rsvpPeopleV071(rsvp.id);
+  const names = people.length
+    ? people.map(p => p.person_name).join(', ')
+    : `${rsvp.first_name} ${rsvp.last_name}`.trim();
+
+  const householdText = invitation
+    ? `\nHousehold: ${invitation.household_name}`
+    : '';
+
+  if (!confirm(
+    `Delete this RSVP?\n\n${names}${householdText}\n\n` +
+    `This removes the RSVP and its named adults/children, but it will NOT delete the invitation household.`
+  )) return;
+
+  const { data, error } = await db.rpc('admin_delete_duplicate_rsvp', {
+    p_rsvp_id: rsvpId
+  });
+
+  if (error) return toast(error.message, 'error');
+
+  const result = Array.isArray(data) ? data[0] : data;
+  toast('RSVP deleted.');
+  selectedReviewId = null;
+  await loadAdmin();
+};
+
